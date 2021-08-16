@@ -1,6 +1,4 @@
-import numpy as np
-
-from render.pixel_buffer_filler.edge_only.line_drawer.line_drawer import LineDrawer
+from crender.py.pixel_buffer_filler.edge_only.line_drawer.line_drawer import LineDrawer
 
 
 class LineBresenham(LineDrawer):

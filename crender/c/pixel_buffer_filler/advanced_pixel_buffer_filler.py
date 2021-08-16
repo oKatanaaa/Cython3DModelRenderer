@@ -1,7 +1,7 @@
 import numpy as np
 
-from render.pixel_buffer_filler.pixel_buffer_filler import PixelBufferFiller
-from render.data_structures import Buffer
+from crender.py.pixel_buffer_filler.pixel_buffer_filler import PixelBufferFiller
+from crender.py.data_structures import Buffer
 
 
 def im_ind(xy_coords):

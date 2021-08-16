@@ -28,7 +28,7 @@ class Renderer:
         Parameters
         ----------
         model : Model
-            Model to render.
+            Model to crender.
         normalize_model : bool
             If true, model coordinates will be changed in order it to fit the image.
             If false, projective transform will be done.

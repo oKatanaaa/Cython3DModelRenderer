@@ -1,1 +1,1 @@
-from .renderer import Renderer
+from crender.py.renderer import Renderer

@@ -1,13 +1,8 @@
-import numpy as np
-
 from crender import Renderer
-from crender.data_structures import Model
-from crender.pixel_buffer_filler import EdgeOnlyPixelBufferFiller
-from crender.pixel_buffer_filler.edge_only.line_drawer import LineBresenham
-from crender.pixel_buffer_filler import AdvancedPixelBufferFiller
-from crender.triangle_iterator import SimpleIterator
-from crender.illumination import GuroIllumination, NoIllumination
-
+from crender.py.data_structures import Model
+from crender.py.pixel_buffer_filler import AdvancedPixelBufferFiller
+from crender.py.triangle_iterator import SimpleIterator
+from crender.py.illumination import GuroIllumination
 
 if __name__ == '__main__':
 
@@ -16,20 +11,13 @@ if __name__ == '__main__':
     filler = AdvancedPixelBufferFiller(1024, 1024, fov=45)
     illumination = GuroIllumination([0, 0, 1])
     # illumination = NoIllumination()
-    # By default it will render 512x512 images
+    # By default it will crender 512x512 images
     renderer = Renderer(filler, illumination, SimpleIterator, *filler.get_size())
 
     def fit_model(m):
         m.shift(-m.get_mean_vertex())
         m.scale(1 / m.get_max_span())
         m.shift(shift=[0, 0, 4])
-
-    model = Model.read_model('objects/Cube2.obj')
-    model.rotate([45, 45, 45])
-    fit_model(model)
-    image = renderer.render(model)
-    image.write_to_file('output/cube2.jpg')
-    renderer.reset_buffers()
 
     model = Model.read_model('objects/T-Rex.obj')
 
@@ -45,17 +33,6 @@ if __name__ == '__main__':
     image = renderer.render(model)
     image.write_to_file('output/bunny.jpg')
     renderer.reset_buffers()
-
-    model = Model.read_model('objects/igor.obj')
-    # fit_model(model)
-    # image = renderer.render(model)
-    # image.write_to_file('output/igor.png')
-    # renderer.reset_buffers()
-
-    model.rotate([0, 180, 0])
-    fit_model(model)
-    image = renderer.render(model)
-    image.write_to_file('output/igor_y180.png')
 
 
 
