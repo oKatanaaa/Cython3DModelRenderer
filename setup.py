@@ -1,4 +1,6 @@
-import setuptools
+from distutils.core import setup
+from Cython.Build import cythonize
+from setuptools import find_packages
 import os
 
 
@@ -6,10 +8,12 @@ meta = {}
 with open(os.path.join('crender', '__version__.py')) as f:
     exec(f.read(), meta)
 
+print('Found packages:', find_packages())
 
-setuptools.setup(
+setup(
+    ext_modules=cythonize('**/*.pyx'),
     name=meta['__title__'],
-    packages=setuptools.find_packages(),
+    packages=find_packages(),
     version=meta['__title__'],
     description=meta['__description__'],
     long_description='...',
