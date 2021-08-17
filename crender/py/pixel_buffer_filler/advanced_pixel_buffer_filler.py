@@ -121,6 +121,7 @@ class AdvancedPixelBufferFiller(PixelBufferFiller):
         xy_grid = np.stack([x, y], axis=-1)
         return xy_grid.reshape(-1, 2)
 
+    # The most heavy method
     def _compute_barycentric_coords(self, tri: np.ndarray, pixel_coords: np.ndarray):
         """
         Computes barycentric coordinates for the given `pixel_coords` within the `triangle`
@@ -142,10 +143,21 @@ class AdvancedPixelBufferFiller(PixelBufferFiller):
         # Pixels' coords
         x = pixel_coords[:, 0]
         y = pixel_coords[:, 1]
+        # --- Optimization Note:
+        # This part is very inefficient in terms of memory allocation.
+        # Memory allocation is a very costly operation and here it happens at least 7 times:
+        # 2 times in every `l` computation and then during stack.
+        # Cython implementation plays out with that knowledge and uses a single buffer for storing the
+        # all the computation results.
+        # Such memory efficient implementation gives 2x boost specifically for this method.
         l0 = ((x1 - x2) * (y - y2) - (y1 - y2) * (x - x2)) / ((x1 - x2) * (y0 - y2) - (y1 - y2) * (x0 - x2))
         l1 = ((x2 - x0) * (y - y0) - (y2 - y0) * (x - x0)) / ((x2 - x0) * (y1 - y0) - (y2 - y0) * (x1 - x0))
         l2 = ((x0 - x1) * (y - y1) - (y0 - y1) * (x - x1)) / ((x0 - x1) * (y2 - y1) - (y0 - y1) * (x2 - x1))
         bar = np.stack([l0, l1, l2], axis=-1)
+
+        # --- Optimization Note:
+        # The rest also does costly memory reallocation which affects the performance.
+
         # Determine which pixel are within the triangle
         select = np.prod(bar >= 0.0, axis=-1).astype('bool').reshape(-1)
         # Select coords only for the encased pixels

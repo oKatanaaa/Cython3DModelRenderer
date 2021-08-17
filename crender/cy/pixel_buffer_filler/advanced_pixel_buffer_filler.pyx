@@ -1,9 +1,16 @@
 # cython: profile=True
 
+cimport numpy as cnp
+cimport cython
+
+from .utils cimport compute_bar_coords
+
 import numpy as np
 
 from crender.py.pixel_buffer_filler.pixel_buffer_filler import PixelBufferFiller
 from crender.py.data_structures import Buffer
+
+
 
 
 def im_ind(xy_coords):
@@ -48,7 +55,7 @@ cdef class AdvancedPixelBufferFiller:
 
         self._ones4 = np.ones((3, 4), dtype='float32')
 
-    def compute_triangle_statistics(self, triangle: np.ndarray, colors: np.ndarray, normals: np.ndarray,
+    def compute_triangle_statistics(self, triangle: cnp.ndarray, colors: cnp.ndarray, normals: cnp.ndarray,
                                     color_buffer: Buffer, z_buffer: Buffer, n_buffer: Buffer):
         # 1. Determine the area of interest
         # 2. Compute barycentric coordinates
@@ -106,7 +113,7 @@ cdef class AdvancedPixelBufferFiller:
 
         return projected_tri[:3, :3]
 
-    def _compute_pixel_coords(self, tri: np.ndarray, buffer_size: tuple) -> np.ndarray:
+    def _compute_pixel_coords(self, tri: cnp.ndarray, buffer_size: tuple) -> cnp.ndarray:
         """
         Returns a grid map with (x, y) coordinates of pixels that lie within a rectangle which
         encases the `triangle`.
@@ -133,7 +140,7 @@ cdef class AdvancedPixelBufferFiller:
         xy_grid = np.stack([x, y], axis=-1)
         return xy_grid.reshape(-1, 2)
 
-    cpdef _compute_barycentric_coords(self, tri: np.ndarray, pixel_coords: np.ndarray):
+    cpdef _compute_barycentric_coords(self, tri: cnp.ndarray, pixel_coords: cnp.ndarray):
         """
         Computes barycentric coordinates for the given `pixel_coords` within the `triangle`
         Parameters
@@ -148,22 +155,18 @@ cdef class AdvancedPixelBufferFiller:
             Computed barycentric coords.
         """
         # Triangles coords
-        x0, y0 = tri[0, 0], tri[0, 1]
-        x1, y1 = tri[1, 0], tri[1, 1]
-        x2, y2 = tri[2, 0], tri[2, 1]
-        # Pixels' coords
-        x = pixel_coords[:, 0]
-        y = pixel_coords[:, 1]
-        l0 = ((x1 - x2) * (y - y2) - (y1 - y2) * (x - x2)) / ((x1 - x2) * (y0 - y2) - (y1 - y2) * (x0 - x2))
-        l1 = ((x2 - x0) * (y - y0) - (y2 - y0) * (x - x0)) / ((x2 - x0) * (y1 - y0) - (y2 - y0) * (x1 - x0))
-        l2 = ((x0 - x1) * (y - y1) - (y0 - y1) * (x - x1)) / ((x0 - x1) * (y2 - y1) - (y0 - y1) * (x2 - x1))
-        bar = np.stack([l0, l1, l2], axis=-1)
-        # Determine which pixel are within the triangle
-        select = np.prod(bar >= 0.0, axis=-1).astype('bool').reshape(-1)
+        cdef:
+            # Pixels' coords
+            cnp.ndarray[int, ndim=1] x = pixel_coords[:, 0]
+            cnp.ndarray[int, ndim=1] y = pixel_coords[:, 1]
+
+            cnp.ndarray[float, ndim=2] bar = np.asarray(compute_bar_coords(tri, x, y), dtype='float32')
+            # Determine which pixel are within the triangle
+            cnp.ndarray select = np.prod(bar >= 0.0, axis=-1).astype('bool').reshape(-1)
         # Select coords only for the encased pixels
         return bar[select], pixel_coords[select]
 
-    def _fill_buffer(self, values: np.ndarray, pixel_coords: np.ndarray, bar_coords: np.ndarray, buffer: Buffer):
+    def _fill_buffer(self, values: cnp.ndarray, pixel_coords: cnp.ndarray, bar_coords: cnp.ndarray, buffer: Buffer):
         """
         Fills in the the given `buffer` with the interpolated values of `values`.
 
@@ -182,7 +185,7 @@ cdef class AdvancedPixelBufferFiller:
         interpolated_values = np.dot(bar_coords, values)
         buffer[im_ind(pixel_coords)] = interpolated_values
 
-    def _fill_z_buffer(self, tri: np.ndarray, pixel_coords: np.ndarray, bar_coords: np.ndarray, z_buffer: Buffer):
+    def _fill_z_buffer(self, tri: cnp.ndarray, pixel_coords: cnp.ndarray, bar_coords: cnp.ndarray, z_buffer: Buffer):
         """
         Fills in the z-buffer by taking into account already existing values.
 

@@ -1,6 +1,7 @@
 from distutils.core import setup
 from Cython.Build import cythonize
 from setuptools import find_packages
+from numpy import get_include
 import os
 
 
@@ -12,6 +13,7 @@ print('Found packages:', find_packages())
 
 setup(
     ext_modules=cythonize('**/*.pyx'),
+    include_dirs=[get_include()],
     name=meta['__title__'],
     packages=find_packages(),
     version=meta['__title__'],
