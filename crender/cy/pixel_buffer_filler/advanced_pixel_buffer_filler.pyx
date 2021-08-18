@@ -37,8 +37,8 @@ cdef class AdvancedPixelBufferFiller:
         self._w = <int>w
         # Prepare the pixel coords buffer beforehand to make slices of it later instead
         # of reallocating memory each time
-        x_coords = np.arange(0, w)
-        y_coords = np.arange(0, h)
+        x_coords = np.arange(0, w, dtype='int32')
+        y_coords = np.arange(0, h, dtype='int32')
         x, y = np.meshgrid(x_coords, y_coords)
         self._xy_grid = np.stack([x, y], axis=-1)
         self._fov = <float>fov
