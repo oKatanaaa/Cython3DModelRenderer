@@ -32,19 +32,19 @@ cdef class AdvancedPixelBufferFiller:
         object _proj_mat
         int[:, :, :] _xy_grid
 
-    def __init__(self, h, w, fov=90.0, z_near=0.1, z_far=1000):
-        self._h = h
-        self._w = w
+    def __init__(self, h, w, fov=90.0, z_near=0.1, z_far=1000.0):
+        self._h = <int>h
+        self._w = <int>w
         # Prepare the pixel coords buffer beforehand to make slices of it later instead
         # of reallocating memory each time
         x_coords = np.arange(0, w)
         y_coords = np.arange(0, h)
         x, y = np.meshgrid(x_coords, y_coords)
         self._xy_grid = np.stack([x, y], axis=-1)
-        self._fov = fov
+        self._fov = <float>fov
         self._f = 1 / np.tan(self._fov / 2 / 180 * np.pi)
-        self._z_near = z_near
-        self._z_far = z_far
+        self._z_near = <float>z_near
+        self._z_far = <float>z_far
         # Aspect ratio
         self._a = h / w
         self._init_projection_matrix()
