@@ -1,5 +1,5 @@
 from libc.stdlib cimport malloc
-from cython cimport cdivision
+from cython cimport cdivision, wraparound
 import numpy as np
 
 
@@ -16,6 +16,7 @@ cdef inline float bar_compute_single_coord(float l1, float l2, float l3, float a
     return (l1 * (y - a) - l2 * (x - b)) / l3
 
 
+@wraparound(False)
 cdef float[:, :] compute_bar_coords(float[:,:] tri, int[:] x, int[:] y):
     cdef:
         float[:, :] bar = np.empty(shape=[x.shape[0], 3], dtype='float32')
@@ -50,6 +51,7 @@ cdef inline float c_min(float a, float b):
         return b
 
 
+@wraparound(False)
 cdef float reduce_min(float[:] arr):
     cdef:
         size_t i = 1
@@ -68,6 +70,7 @@ cdef inline float c_max(float a, float b):
         return b
 
 
+@wraparound(False)
 cdef float reduce_max(float[:] arr):
     cdef:
         size_t i = 1
