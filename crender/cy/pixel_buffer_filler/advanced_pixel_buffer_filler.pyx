@@ -2,8 +2,9 @@
 
 cimport numpy as cnp
 cimport cython
+from libc.math cimport ceil
 
-from .utils cimport compute_bar_coords
+from .utils cimport compute_bar_coords, reduce_min, reduce_max, clip
 
 import numpy as np
 
@@ -29,10 +30,17 @@ cdef class AdvancedPixelBufferFiller:
         float _a
         object _ones4
         object _proj_mat
+        int[:, :, :] _xy_grid
 
     def __init__(self, h, w, fov=90.0, z_near=0.1, z_far=1000):
         self._h = h
         self._w = w
+        # Prepare the pixel coords buffer beforehand to make slices of it later instead
+        # of reallocating memory each time
+        x_coords = np.arange(0, w)
+        y_coords = np.arange(0, h)
+        x, y = np.meshgrid(x_coords, y_coords)
+        self._xy_grid = np.stack([x, y], axis=-1)
         self._fov = fov
         self._f = 1 / np.tan(self._fov / 2 / 180 * np.pi)
         self._z_near = z_near
@@ -77,8 +85,16 @@ cdef class AdvancedPixelBufferFiller:
             return
 
         projected_tri = self._project_on_screen(triangle)
-        pixel_coords = self._compute_pixel_coords(projected_tri, color_buffer.get_size())
+
+        cdef cnp.ndarray[int, ndim=2] pixel_coords
+        pixel_coords = np.asarray(self._compute_pixel_coords(projected_tri))
+
+        if pixel_coords.shape[0] == 0:
+            # The triangle may be invisible, no need for further processing
+            return
+
         # Returns coords only for those pixels that lie within the triangle
+        cdef cnp.ndarray[float, ndim=2] pixel_bar_coords
         pixel_bar_coords, pixel_coords = self._compute_barycentric_coords(projected_tri, pixel_coords)
         # Returns coords only for visible pixels (that are not behind something)
         pixel_bar_coords, pixel_coords = self._fill_z_buffer(projected_tri, pixel_coords, pixel_bar_coords, z_buffer)
@@ -113,7 +129,7 @@ cdef class AdvancedPixelBufferFiller:
 
         return projected_tri[:3, :3]
 
-    def _compute_pixel_coords(self, tri: cnp.ndarray, buffer_size: tuple) -> cnp.ndarray:
+    cdef int[:, :] _compute_pixel_coords(self, float[:, :] tri):
         """
         Returns a grid map with (x, y) coordinates of pixels that lie within a rectangle which
         encases the `triangle`.
@@ -128,19 +144,24 @@ cdef class AdvancedPixelBufferFiller:
         -------
         np.ndarray of shape [n_pixels, 2, 1]
         """
-        h, w = buffer_size
-        x_left, x_right = np.ceil((np.min(tri[:, 0]), np.max(tri[:, 0]))).astype('int32')
-        x_left, x_right = np.clip([x_left, x_right], a_min=0, a_max=w)
-        y_top, y_bot = np.ceil((np.max(tri[:, 1]), np.min(tri[:, 1]))).astype('int32')
-        y_top, y_bot = np.clip([y_top, y_bot], a_min=0, a_max=h)
+        cdef:
+            int h = self._h, w = self._w
+            float[:] x = tri[:, 0], y = tri[:, 1]
+            float _x_left = reduce_min(tri[:, 0]), _x_right = reduce_max(tri[:, 0])
+            float _y_top = reduce_max(tri[:, 1]), _y_bot = reduce_min(tri[:, 2])
+            int x_left = <int>ceil(_x_left), x_right = <int>ceil(_x_right)
+            int y_top = <int>ceil(_y_top), y_bot = <int>ceil(_y_bot)
 
-        x_coords = np.arange(x_left, x_right)
-        y_coords = np.arange(y_bot, y_top)
-        x, y = np.meshgrid(x_coords, y_coords)
-        xy_grid = np.stack([x, y], axis=-1)
-        return xy_grid.reshape(-1, 2)
+        x_left = clip(x_left, 0, w)
+        x_right = clip(x_right, 0, w)
 
-    cpdef _compute_barycentric_coords(self, tri: cnp.ndarray, pixel_coords: cnp.ndarray):
+        y_top = clip(y_top, 0, h)
+        y_bot = clip(y_bot, 0, h)
+
+        cdef int[:, :, :] xy_slice = self._xy_grid[y_bot: y_top, x_left: x_right, :]
+        return np.asarray(xy_slice).reshape(-1, 2)
+
+    cpdef _compute_barycentric_coords(self, float[:, :] tri, int[:, :] pixel_coords):
         """
         Computes barycentric coordinates for the given `pixel_coords` within the `triangle`
         Parameters
@@ -157,14 +178,13 @@ cdef class AdvancedPixelBufferFiller:
         # Triangles coords
         cdef:
             # Pixels' coords
-            cnp.ndarray[int, ndim=1] x = pixel_coords[:, 0]
-            cnp.ndarray[int, ndim=1] y = pixel_coords[:, 1]
-
+            int[:] x = pixel_coords[:, 0]
+            int[:] y = pixel_coords[:, 1]
             cnp.ndarray[float, ndim=2] bar = np.asarray(compute_bar_coords(tri, x, y), dtype='float32')
-            # Determine which pixel are within the triangle
+            # Determine which pixels are within the triangle
             cnp.ndarray select = np.prod(bar >= 0.0, axis=-1).astype('bool').reshape(-1)
         # Select coords only for the encased pixels
-        return bar[select], pixel_coords[select]
+        return bar[select], np.asarray(pixel_coords)[select]
 
     def _fill_buffer(self, values: cnp.ndarray, pixel_coords: cnp.ndarray, bar_coords: cnp.ndarray, buffer: Buffer):
         """

@@ -94,6 +94,7 @@ class AdvancedPixelBufferFiller(PixelBufferFiller):
 
         return projected_tri[:3, :3]
 
+    # Second most heavy method
     def _compute_pixel_coords(self, tri: np.ndarray, buffer_size: tuple) -> np.ndarray:
         """
         Returns a grid map with (x, y) coordinates of pixels that lie within a rectangle which
@@ -109,12 +110,24 @@ class AdvancedPixelBufferFiller(PixelBufferFiller):
         -------
         np.ndarray of shape [n_pixels, 2, 1]
         """
+        # --- Performance note
+        # Just like _compute_barycentric_coords, this method as well does a lot of memory
+        # reallocation dumping the performance drastically.
+        # Another reason it is slow is Python/C API calls overhead. The first half of the code does
+        # computation in values of a 3x3 matrix. The data are very little, making the math work much faster
+        # than the Python/C API calls that take most of the time making everything very inefficient.
+        # All the numpy functions here are replaced with their C analogs to reduce the Python/C API calls overhead.
         h, w = buffer_size
         x_left, x_right = np.ceil((np.min(tri[:, 0]), np.max(tri[:, 0]))).astype('int32')
         x_left, x_right = np.clip([x_left, x_right], a_min=0, a_max=w)
         y_top, y_bot = np.ceil((np.max(tri[:, 1]), np.min(tri[:, 1]))).astype('int32')
         y_top, y_bot = np.clip([y_top, y_bot], a_min=0, a_max=h)
 
+        # --- Performance note
+        # As was noted, this is a very memory intensive code which does a lot of reallocation.
+        # Since reallocation is a very costly operation, we want to avoid it as much as possible.
+        # So instead of reallocating memory all the time, we do it once for xy_grid and then slice
+        # for the value regions we need.
         x_coords = np.arange(x_left, x_right)
         y_coords = np.arange(y_bot, y_top)
         x, y = np.meshgrid(x_coords, y_coords)

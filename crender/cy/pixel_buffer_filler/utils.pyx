@@ -1,8 +1,10 @@
-# cython: profile=True
-
 from libc.stdlib cimport malloc
 from cython cimport cdivision
 import numpy as np
+
+
+
+
 
 cdef float* allocate_float_buffer(size_t n):
     cdef float *buffer = <float*>malloc(n * sizeof(float))
@@ -12,6 +14,7 @@ cdef float* allocate_float_buffer(size_t n):
 @cdivision(True)
 cdef inline float bar_compute_single_coord(float l1, float l2, float l3, float a, float b, float x, float y):
     return (l1 * (y - a) - l2 * (x - b)) / l3
+
 
 cdef float[:, :] compute_bar_coords(float[:,:] tri, int[:] x, int[:] y):
     cdef:
@@ -38,3 +41,47 @@ cdef float[:, :] compute_bar_coords(float[:,:] tri, int[:] x, int[:] y):
         bar[i, 2] = bar_compute_single_coord(l21, l22, l23, y1, x1, <float>x[i], <float>y[i])
     return bar
 
+
+
+cdef inline float c_min(float a, float b):
+    if a < b:
+        return a
+    else:
+        return b
+
+
+cdef float reduce_min(float[:] arr):
+    cdef:
+        size_t i = 1
+        float min_val = arr[0]
+
+    for i in range(arr.shape[0]):
+        min_val = c_min(arr[i], min_val)
+
+    return min_val
+
+
+cdef inline float c_max(float a, float b):
+    if a > b:
+        return a
+    else:
+        return b
+
+
+cdef float reduce_max(float[:] arr):
+    cdef:
+        size_t i = 1
+        float max_val = arr[0]
+
+    for i in range(arr.shape[0]):
+        max_val = c_max(arr[i], max_val)
+
+    return max_val
+
+
+cdef int clip(int a, int min_val, int max_val):
+    if a < min_val:
+        return min_val
+    if a > max_val:
+        return max_val
+    return a
