@@ -37,6 +37,13 @@ cdef class AdvancedPixelBufferFiller:
         self._w = <int>w
         # Prepare the pixel coords buffer beforehand to make slices of it later instead
         # of reallocating memory each time
+        # You have to specify the buffer type explicitly because otherwise
+        # in another environment you may encounter an issue when numpy allocates an
+        # arroy of dtype long which leads to runtime exception.
+        # For example, on my laptop with Windows the code without specified dtype runs just fine.
+        # But if I try to run it on Linux, it crashes telling me "dtype mismatch expected int but got long" or
+        # something like that. It may be related to numpy version, but I didn't check.
+        # The point is ALWAYS SPECIFY THE DTYPE!
         x_coords = np.arange(0, w, dtype='int32')
         y_coords = np.arange(0, h, dtype='int32')
         x, y = np.meshgrid(x_coords, y_coords)
