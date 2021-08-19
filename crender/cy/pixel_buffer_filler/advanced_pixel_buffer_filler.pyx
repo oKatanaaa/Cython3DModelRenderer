@@ -4,13 +4,12 @@ cimport numpy as cnp
 cimport cython
 from libc.math cimport ceil
 
-from .utils cimport compute_bar_coords, reduce_min, reduce_max, clip
+from .math_utils cimport compute_bar_coords, reduce_min, reduce_max, clip
 
 import numpy as np
 
 from crender.py.pixel_buffer_filler.pixel_buffer_filler import PixelBufferFiller
 from crender.py.data_structures import Buffer
-
 
 
 
@@ -81,10 +80,6 @@ cdef class AdvancedPixelBufferFiller:
             f"color_buffer - {color_buffer.get_size()}, " \
             f"z_buffer - {z_buffer.get_size()}, " \
             f"n_buffer - {n_buffer.get_size()}."
-
-        if np.cross(triangle[1, :2] - triangle[0, :2], triangle[2, :2] - triangle[0, :2]) == 0:
-            # The triangle is degenerative, so it is invisible
-            return
 
         # (Task #13)
         if np.dot([0, 0, 1], np.mean(normals, axis=0)) >= 0:

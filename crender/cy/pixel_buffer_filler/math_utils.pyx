@@ -3,9 +3,6 @@ from cython cimport cdivision, wraparound
 import numpy as np
 
 
-
-
-
 cdef float* allocate_float_buffer(size_t n):
     cdef float *buffer = <float*>malloc(n * sizeof(float))
     return buffer
@@ -36,12 +33,15 @@ cdef float[:, :] compute_bar_coords(float[:,:] tri, int[:] x, int[:] y):
 
         int i = 0
 
-    for i in range(bar.shape[0]):
-        bar[i, 0] = bar_compute_single_coord(l01, l02, l03, y2, x2, <float>x[i], <float>y[i])
-        bar[i, 1] = bar_compute_single_coord(l11, l12, l13, y0, x0, <float>x[i], <float>y[i])
-        bar[i, 2] = bar_compute_single_coord(l21, l22, l23, y1, x1, <float>x[i], <float>y[i])
-    return bar
+        float x_val, y_val
 
+    for i in range(bar.shape[0]):
+        x_val = <float>x[i]
+        y_val = <float>y[i]
+        bar[i, 0] = bar_compute_single_coord(l01, l02, l03, y2, x2, x_val, y_val)
+        bar[i, 1] = bar_compute_single_coord(l11, l12, l13, y0, x0, x_val, y_val)
+        bar[i, 2] = bar_compute_single_coord(l21, l22, l23, y1, x1, x_val, y_val)
+    return bar
 
 
 cdef inline float c_min(float a, float b):
