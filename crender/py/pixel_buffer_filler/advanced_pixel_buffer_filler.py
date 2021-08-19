@@ -48,6 +48,14 @@ class AdvancedPixelBufferFiller(PixelBufferFiller):
             f"z_buffer - {z_buffer.get_size()}, " \
             f"n_buffer - {n_buffer.get_size()}."
 
+        # --- Performance note
+        # Even though this piece of code seems very little, it takes a huge chunk of overall runtime.
+        # This code was writen by my friend and as far as I understand, it is meant to check whether
+        # the triangle is oriented upwards or downwards (meaning that only a side of the triangle is seen and
+        # since the triangle is flat, it is invisible to the observer).
+        # But in reality the aren't that many of such triangles (if any). Or maybe the condition
+        # is too strict to be fulfilled.
+        # Anyway, removing this check boosted performance on my laptop from 1.455s to 0.929s. A lot!
         if np.cross(triangle[1, :2] - triangle[0, :2], triangle[2, :2] - triangle[0, :2]) == 0:
             # The triangle is degenerative, so it is invisible
             return
