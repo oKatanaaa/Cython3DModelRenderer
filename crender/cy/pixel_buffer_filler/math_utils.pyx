@@ -88,3 +88,26 @@ cdef int clip(int a, int min_val, int max_val):
     if a > max_val:
         return max_val
     return a
+
+@wraparound(False)
+cdef void matmul(float[:,::1] a, float[:, ::1] b, float[:, ::1] out):
+    cdef:
+        size_t i, j, k
+        size_t N = a.shape[0], M = b.shape[1], D = a.shape[1]
+
+    for i in range(N):
+        for j in range(M):
+            for k in range(D):
+                out[i, j] += a[i, k] * b[k, j]
+
+
+@wraparound(False)
+cdef void matmul_3x4(float[:, ::1] a, float[:, ::1] b, float[:, ::1] out):
+    # a - [3, 4]
+    # b - [4, 4]
+    # out - [3, 4]
+    cdef:
+        size_t i, j
+    for i in range(3):
+        for j in range(4):
+            out[i, j] = a[i, 0] * b[0, j] + a[i, 1] * b[1, j] + a[i, 2] * b[2, j] + a[i, 3] * b[3, j]

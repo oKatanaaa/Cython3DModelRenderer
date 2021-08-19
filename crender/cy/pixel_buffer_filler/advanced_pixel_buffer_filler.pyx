@@ -4,7 +4,7 @@ cimport numpy as cnp
 cimport cython
 from libc.math cimport ceil
 
-from .math_utils cimport compute_bar_coords, reduce_min, reduce_max, clip
+from .math_utils cimport compute_bar_coords, reduce_min, reduce_max, clip, matmul_3x4, matmul
 
 import numpy as np
 
@@ -27,11 +27,12 @@ cdef class AdvancedPixelBufferFiller:
         float _z_near
         float _z_far
         float _a
-        object _ones4
+        float[:, ::1] _ones4
         object _proj_mat
-        int[:, :, :] _xy_grid
+        int[:, :, ::1] _xy_grid
+        float[:, ::1] _projected_tri_buffer
 
-    def __init__(self, h, w, fov=90.0, z_near=0.1, z_far=1000.0):
+    def __cinit__(self, h, w, fov=90.0, z_near=0.1, z_far=1000.0):
         self._h = <int>h
         self._w = <int>w
         # Prepare the pixel coords buffer beforehand to make slices of it later instead
@@ -53,6 +54,7 @@ cdef class AdvancedPixelBufferFiller:
         self._z_far = <float>z_far
         # Aspect ratio
         self._a = h / w
+        self._projected_tri_buffer = np.empty(shape=[4, 4], dtype='float32')
         self._init_projection_matrix()
 
     def get_size(self):
@@ -86,7 +88,7 @@ cdef class AdvancedPixelBufferFiller:
             # The triangle faces away from the camera, so don't need to draw it
             return
 
-        projected_tri = self._project_on_screen(triangle)
+        cdef cnp.ndarray[float, ndim=2] projected_tri = self._project_on_screen(triangle)
 
         cdef cnp.ndarray[int, ndim=2] pixel_coords
         pixel_coords = np.asarray(self._compute_pixel_coords(projected_tri))
@@ -108,28 +110,41 @@ cdef class AdvancedPixelBufferFiller:
         self._fill_buffer(colors, pixel_coords, pixel_bar_coords, color_buffer)
         self._fill_buffer(normals, pixel_coords, pixel_bar_coords, n_buffer)
 
-    def _project_on_screen(self, tri: np.ndarray):
+    cdef cnp.ndarray[float, ndim=2] _project_on_screen(self, float[:,:] tri):
         self._ones4[:3, :3] = tri
         # --- Perspective projection
         # Projects vertices onto the screen plane and makes them to be in
         # range [-1, 1]. Vertices outside of that range are invisible.
-        projected_tri = np.dot(self._ones4, self._proj_mat)
-        # -- Perspective divide: (x, y) / z.
+        cdef float[:, ::1] projected_tri = self._projected_tri_buffer
+        # Clear the buffer
+        projected_tri[...] = 0.0
+        matmul_3x4(self._ones4, self._proj_mat, projected_tri)
+        projected_tri = np.asarray(self._projected_tri_buffer)
+        # --- Perspective divide: (x, y) / z.
         # It makes farther objects to appear smaller on the screen.
         # Z coordinate is made to be in range [0, 1].
         # 0 means the object is very close to the camera (lies on the screen).
         # 1 means the object is on the border of visibility (the farthest visible point).
         # Any points outside of that range are ether behind the camera or too far away to be visible.
-        projected_tri[:, :3] /= projected_tri[:, -1:]
-        # -- Stretching the objects along the screen.
+        cdef size_t i
+        for i in range(3):
+            projected_tri[i, 0] /= projected_tri[i, -1]
+            projected_tri[i, 1] /= projected_tri[i, -1]
+            projected_tri[i, 2] /= projected_tri[i, -1]
+
+        # --- Stretching the objects along the screen.
         # The same as:
         # 1. multiply by w/2, h/2
         # 2. shift by w/2, h/2 into the center of the screen
-        projected_tri[:, :2] += 1.0
-        projected_tri[:, 0] *= self._w / 2
-        projected_tri[:, 1] *= self._h / 2
+        cdef float shift = 1.0, x_scale = self._w / 2.0, y_scale = self._h / 2.0
+        projected_tri[0, 0] += shift; projected_tri[0, 1] += shift
+        projected_tri[1, 0] += shift; projected_tri[1, 1] += shift
+        projected_tri[2, 0] += shift; projected_tri[2, 1] += shift
 
-        return projected_tri[:3, :3]
+        projected_tri[0, 0] *= x_scale; projected_tri[0, 1] *= y_scale
+        projected_tri[1, 0] *= x_scale; projected_tri[1, 1] *= y_scale
+        projected_tri[2, 0] *= x_scale; projected_tri[2, 1] *= y_scale
+        return np.asarray(projected_tri[:3, :3])
 
     cdef int[:, :] _compute_pixel_coords(self, float[:, :] tri):
         """
@@ -163,7 +178,7 @@ cdef class AdvancedPixelBufferFiller:
         cdef int[:, :, :] xy_slice = self._xy_grid[y_bot: y_top, x_left: x_right, :]
         return np.asarray(xy_slice).reshape(-1, 2)
 
-    cpdef _compute_barycentric_coords(self, float[:, :] tri, int[:, :] pixel_coords):
+    cdef _compute_barycentric_coords(self, float[:, ::] tri, int[:, :] pixel_coords):
         """
         Computes barycentric coordinates for the given `pixel_coords` within the `triangle`
         Parameters
