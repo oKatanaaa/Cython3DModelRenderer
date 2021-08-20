@@ -3,8 +3,10 @@
 cimport numpy as cnp
 cimport cython
 from libc.math cimport ceil
+from libc.stdlib cimport free
 
 from .math_utils cimport compute_bar_coords, reduce_min, reduce_max, clip, matmul_3x4, matmul
+from .array_utils cimport select_values_float, select_values_int
 
 import numpy as np
 
@@ -100,10 +102,20 @@ cdef class AdvancedPixelBufferFiller:
         # Returns coords only for those pixels that lie within the triangle
         cdef cnp.ndarray[float, ndim=2] pixel_bar_coords
         pixel_bar_coords, pixel_coords = self._compute_barycentric_coords(projected_tri, pixel_coords)
-        # Returns coords only for visible pixels (that are not behind something)
-        pixel_bar_coords, pixel_coords = self._fill_z_buffer(projected_tri, pixel_coords, pixel_bar_coords, z_buffer)
 
-        if len(pixel_bar_coords) == 0:
+        if pixel_bar_coords.shape[0] == 0:
+            # No pixels are visible
+            return
+        # Returns coords only for visible pixels (that are not behind something)
+        cdef:
+            float[:, :] pixel_bar_coords_
+            int[:, :] pixel_coords_
+
+        pixel_bar_coords_, pixel_coords_ = self._fill_z_buffer(projected_tri, pixel_coords, pixel_bar_coords, z_buffer)
+        pixel_bar_coords = np.asarray(pixel_bar_coords_)
+        pixel_coords = np.asarray(pixel_coords_)
+
+        if pixel_bar_coords.shape[0] == 0:
             # The triangle may be invisible, no need to call buffers filling
             return
 
@@ -119,7 +131,13 @@ cdef class AdvancedPixelBufferFiller:
         # Clear the buffer
         projected_tri[...] = 0.0
         matmul_3x4(self._ones4, self._proj_mat, projected_tri)
-        projected_tri = np.asarray(self._projected_tri_buffer)
+        # --- Note
+        # Before there was the following line:
+        # projected_tri = np.asarray(self._projected_tri_buffer)
+        # It doesn't change the code functionality (I just forgot to delete it), but it turns out
+        # that execution of that line takes up to 32% of the whole time in this method!
+        # Removing this line boosted performance of that method from 0.019s to 0.013s.
+        # (measurements are taken using cProfile from tottime column).
         # --- Perspective divide: (x, y) / z.
         # It makes farther objects to appear smaller on the screen.
         # Z coordinate is made to be in range [0, 1].
@@ -178,6 +196,7 @@ cdef class AdvancedPixelBufferFiller:
         cdef int[:, :, :] xy_slice = self._xy_grid[y_bot: y_top, x_left: x_right, :]
         return np.asarray(xy_slice).reshape(-1, 2)
 
+    @cython.wraparound(False)
     cdef _compute_barycentric_coords(self, float[:, ::] tri, int[:, :] pixel_coords):
         """
         Computes barycentric coordinates for the given `pixel_coords` within the `triangle`
@@ -197,11 +216,24 @@ cdef class AdvancedPixelBufferFiller:
             # Pixels' coords
             int[:] x = pixel_coords[:, 0]
             int[:] y = pixel_coords[:, 1]
-            cnp.ndarray[float, ndim=2] bar = np.asarray(compute_bar_coords(tri, x, y), dtype='float32')
-            # Determine which pixels are within the triangle
-            cnp.ndarray select = np.prod(bar >= 0.0, axis=-1).astype('bool').reshape(-1)
+            float[:, :] bar = np.asarray(compute_bar_coords(tri, x, y), dtype='float32')
+            int[:] select = np.empty(bar.shape[0], dtype='int32')
+            size_t i, new_size = 0
+
+        # Determine which pixels are within the triangle
+        for i in range(bar.shape[0]):
+            if bar[i, 0] > 0.0 and bar[i, 1] > 0.0 and bar[i, 2] > 0.0:
+                select[i] = 1
+                new_size += 1
+                continue
+            select[i] = 0
+
+        # Select the necessary values
+        cdef:
+            float[:, :] bar_ = select_values_float(bar, select, new_size)
+            int[:, :] pixel_coords_ = select_values_int(pixel_coords, select, new_size)
         # Select coords only for the encased pixels
-        return bar[select], np.asarray(pixel_coords)[select]
+        return np.asarray(bar_), np.asarray(pixel_coords_)
 
     def _fill_buffer(self, values: cnp.ndarray, pixel_coords: cnp.ndarray, bar_coords: cnp.ndarray, buffer: Buffer):
         """
@@ -222,7 +254,9 @@ cdef class AdvancedPixelBufferFiller:
         interpolated_values = np.dot(bar_coords, values)
         buffer[im_ind(pixel_coords)] = interpolated_values
 
-    def _fill_z_buffer(self, tri: cnp.ndarray, pixel_coords: cnp.ndarray, bar_coords: cnp.ndarray, z_buffer: Buffer):
+    @cython.wraparound(False)
+    @cython.overflowcheck(False)
+    cdef _fill_z_buffer(self, float[:, :] tri, int[:, :] pixel_coords, float[:, :] bar_coords, z_buffer: Buffer):
         """
         Fills in the z-buffer by taking into account already existing values.
 
@@ -237,24 +271,37 @@ cdef class AdvancedPixelBufferFiller:
         z_buffer : Buffer
             The z-buffer to fill in.
         """
-        # [n, 3] * [3, 1] = [n, 1]
-        interpolated_z = np.dot(bar_coords, tri[:, 2:])
-        # --- Depth check
-        # Select only those Z that are in the range [-1, 1]
-        select = np.bitwise_and(interpolated_z >= 0, interpolated_z <= 1).reshape(-1).astype('bool')
-        interpolated_z = interpolated_z[select]
-        pixel_coords = pixel_coords[select]
-        bar_coords = bar_coords[select]
+        cdef:
+            # If you dont initialize new_size with 0, it turns out that it equals 3. Surprise!
+            size_t i, new_size = 0
+            int x, y
+            int[:] select = np.empty(shape=bar_coords.shape[0], dtype='int32')
+            float z
 
-        # --- Select only those Z that are closer to the camera than the previous Z
-        already_filled_z = z_buffer[im_ind(pixel_coords)]
-        select = (interpolated_z < already_filled_z).reshape(-1)
-        interpolated_z = interpolated_z[select]
-        pixel_coords = pixel_coords[select]
-        bar_coords = bar_coords[select]
-        z_buffer[im_ind(pixel_coords)] = interpolated_z
+        for i in range(bar_coords.shape[0]):
+            # --- Depth interpolation
+            # Save the results into bar_coords buffer to save memory
+            z = bar_coords[i, 0] * tri[0, 2] + bar_coords[i, 1] * tri[1, 2] + bar_coords[i, 2] * tri[2, 2]
+            if not (-1. <= z and z <= 1.):
+                select[i] = 0
+                continue
+
+            x = pixel_coords[i, 0]
+            y = pixel_coords[i, 1]
+            # Check if new z is closer to the camera than the previous z
+            if z_buffer[y, x] > z:
+                z_buffer[y, x] = z
+                select[i] = 1
+                new_size += 1
+            else:
+                select[i] = 0
+
+        # Separate variables are used because otherwise a memory leak happens.
+        # I have no idea why is that so...
+        cdef int[:, :] pixel_coords_ = select_values_int(pixel_coords, select, new_size)
+        cdef float[:, :] bar_coords_ = select_values_float(bar_coords, select, new_size)
         # --- Return only 'visible' pixel coords
-        return bar_coords, pixel_coords
+        return bar_coords_, pixel_coords_
 
 
 if __name__ == '__main__':

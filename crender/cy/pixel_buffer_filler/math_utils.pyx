@@ -1,5 +1,6 @@
 from libc.stdlib cimport malloc
 from cython cimport cdivision, wraparound
+import cython
 import numpy as np
 
 
