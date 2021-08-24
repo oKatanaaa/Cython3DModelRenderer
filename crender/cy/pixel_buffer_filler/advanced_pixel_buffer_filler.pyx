@@ -15,7 +15,7 @@ from crender.py.data_structures import Buffer
 
 
 
-def im_ind(xy_coords):
+cdef im_ind(int[:, :] xy_coords):
     # a small utils for fast indexing in the image tensor
     return xy_coords[:, 1], xy_coords[:, 0]
 
@@ -73,56 +73,49 @@ cdef class AdvancedPixelBufferFiller:
 
         self._ones4 = np.ones((3, 4), dtype='float32')
 
-    def compute_triangle_statistics(self, triangle: cnp.ndarray, colors: cnp.ndarray, normals: cnp.ndarray,
+    def compute_triangle_statistics(self,
+                                    float[:, ::1] triangle,
+                                    cnp.ndarray colors,
+                                    cnp.ndarray[float, ndim=2] normals,
                                     color_buffer: Buffer, z_buffer: Buffer, n_buffer: Buffer):
         # 1. Determine the area of interest
         # 2. Compute barycentric coordinates
         # 3. Fill in z-buffer and determine which pixels are visible
         # 3. Fill in other buffers
-        assert color_buffer.get_size() == z_buffer.get_size() == n_buffer.get_size() == (self._h, self._w), \
-            "Buffers' spatial dimensions must be the same, but received: " \
-            f"color_buffer - {color_buffer.get_size()}, " \
-            f"z_buffer - {z_buffer.get_size()}, " \
-            f"n_buffer - {n_buffer.get_size()}."
-
         # (Task #13)
-        if np.dot([0, 0, 1], np.mean(normals, axis=0)) >= 0:
+        cdef float mean_z = (normals[0, 2] + normals[1, 2] + normals[2, 2]) / 3.0
+        if mean_z >= 0.0:
             # The triangle faces away from the camera, so don't need to draw it
             return
 
-        cdef cnp.ndarray[float, ndim=2] projected_tri = self._project_on_screen(triangle)
-
-        cdef cnp.ndarray[int, ndim=2] pixel_coords
-        pixel_coords = np.asarray(self._compute_pixel_coords(projected_tri))
+        cdef:
+            float[:, :] projected_tri = self._project_on_screen(triangle)
+            int[:, :] pixel_coords = self._compute_pixel_coords(projected_tri)
+            int[:, ::1] pixel_coords_ccont
+            float[:, ::1] bar_coords_ccont
 
         if pixel_coords.shape[0] == 0:
             # The triangle may be invisible, no need for further processing
             return
 
         # Returns coords only for those pixels that lie within the triangle
-        cdef cnp.ndarray[float, ndim=2] pixel_bar_coords
-        pixel_bar_coords, pixel_coords = self._compute_barycentric_coords(projected_tri, pixel_coords)
+        bar_coords_ccont, pixel_coords_ccont = self._compute_barycentric_coords(projected_tri, pixel_coords)
 
-        if pixel_bar_coords.shape[0] == 0:
+        if pixel_coords_ccont.shape[0] == 0:
             # No pixels are visible
             return
+
         # Returns coords only for visible pixels (that are not behind something)
-        cdef:
-            float[:, :] pixel_bar_coords_
-            int[:, :] pixel_coords_
+        bar_coords_ccont, pixel_coords_ccont = self._fill_z_buffer(projected_tri, pixel_coords_ccont, bar_coords_ccont, z_buffer)
 
-        pixel_bar_coords_, pixel_coords_ = self._fill_z_buffer(projected_tri, pixel_coords, pixel_bar_coords, z_buffer)
-        pixel_bar_coords = np.asarray(pixel_bar_coords_)
-        pixel_coords = np.asarray(pixel_coords_)
-
-        if pixel_bar_coords.shape[0] == 0:
+        if pixel_coords_ccont.shape[0] == 0:
             # The triangle may be invisible, no need to call buffers filling
             return
 
-        self._fill_buffer(colors, pixel_coords, pixel_bar_coords, color_buffer)
-        self._fill_buffer(normals, pixel_coords, pixel_bar_coords, n_buffer)
+        self._fill_buffer(colors, pixel_coords_ccont, bar_coords_ccont, color_buffer)
+        self._fill_buffer(normals, pixel_coords_ccont, bar_coords_ccont, n_buffer)
 
-    cdef cnp.ndarray[float, ndim=2] _project_on_screen(self, float[:,:] tri):
+    cdef float[:, :] _project_on_screen(self, float[:,:] tri):
         self._ones4[:3, :3] = tri
         # --- Perspective projection
         # Projects vertices onto the screen plane and makes them to be in
@@ -162,7 +155,7 @@ cdef class AdvancedPixelBufferFiller:
         projected_tri[0, 0] *= x_scale; projected_tri[0, 1] *= y_scale
         projected_tri[1, 0] *= x_scale; projected_tri[1, 1] *= y_scale
         projected_tri[2, 0] *= x_scale; projected_tri[2, 1] *= y_scale
-        return np.asarray(projected_tri[:3, :3])
+        return projected_tri[:3, :3]
 
     cdef int[:, :] _compute_pixel_coords(self, float[:, :] tri):
         """
@@ -197,7 +190,7 @@ cdef class AdvancedPixelBufferFiller:
         return np.asarray(xy_slice).reshape(-1, 2)
 
     @cython.wraparound(False)
-    cdef _compute_barycentric_coords(self, float[:, ::] tri, int[:, :] pixel_coords):
+    cdef _compute_barycentric_coords(self, float[:, :] tri, int[:, :] pixel_coords):
         """
         Computes barycentric coordinates for the given `pixel_coords` within the `triangle`
         Parameters
@@ -216,8 +209,8 @@ cdef class AdvancedPixelBufferFiller:
             # Pixels' coords
             int[:] x = pixel_coords[:, 0]
             int[:] y = pixel_coords[:, 1]
-            float[:, :] bar = np.asarray(compute_bar_coords(tri, x, y), dtype='float32')
-            int[:] select = np.empty(bar.shape[0], dtype='int32')
+            float[:, ::1] bar = compute_bar_coords(tri, x, y)
+            int[::1] select = np.empty(bar.shape[0], dtype='int32')
             size_t i, new_size = 0
 
         # Determine which pixels are within the triangle
@@ -230,12 +223,12 @@ cdef class AdvancedPixelBufferFiller:
 
         # Select the necessary values
         cdef:
-            float[:, :] bar_ = select_values_float(bar, select, new_size)
-            int[:, :] pixel_coords_ = select_values_int(pixel_coords, select, new_size)
-        # Select coords only for the encased pixels
-        return np.asarray(bar_), np.asarray(pixel_coords_)
+            float[:, ::1] bar_ = select_values_float(bar, select, new_size)
+            int[:, ::1] pixel_coords_ = select_values_int(pixel_coords, select, new_size)
 
-    def _fill_buffer(self, values: cnp.ndarray, pixel_coords: cnp.ndarray, bar_coords: cnp.ndarray, buffer: Buffer):
+        return bar_, pixel_coords_
+
+    cdef void _fill_buffer(self, cnp.ndarray values, int[:, ::1] pixel_coords, float[:, ::1] bar_coords, buffer: Buffer):
         """
         Fills in the the given `buffer` with the interpolated values of `values`.
 
@@ -251,12 +244,12 @@ cdef class AdvancedPixelBufferFiller:
         # Interpolation is done via weighting the values by their barycentric coordinates:
         # val' = l0 * val0 + l1 * val1 * l2 * val2
         # [n, 3] * [3, d] = [n, d]
-        interpolated_values = np.dot(bar_coords, values)
+        cdef cnp.ndarray interpolated_values = np.dot(bar_coords, values)
         buffer[im_ind(pixel_coords)] = interpolated_values
 
     @cython.wraparound(False)
     @cython.overflowcheck(False)
-    cdef _fill_z_buffer(self, float[:, :] tri, int[:, :] pixel_coords, float[:, :] bar_coords, z_buffer: Buffer):
+    cdef _fill_z_buffer(self, float[:, :] tri, int[:, ::1] pixel_coords, float[:, ::1] bar_coords, z_buffer: Buffer):
         """
         Fills in the z-buffer by taking into account already existing values.
 
@@ -275,14 +268,14 @@ cdef class AdvancedPixelBufferFiller:
             # If you dont initialize new_size with 0, it turns out that it equals 3. Surprise!
             size_t i, new_size = 0
             int x, y
-            int[:] select = np.empty(shape=bar_coords.shape[0], dtype='int32')
+            int[::1] select = np.empty(shape=bar_coords.shape[0], dtype='int32')
             float z
 
         for i in range(bar_coords.shape[0]):
             # --- Depth interpolation
             # Save the results into bar_coords buffer to save memory
             z = bar_coords[i, 0] * tri[0, 2] + bar_coords[i, 1] * tri[1, 2] + bar_coords[i, 2] * tri[2, 2]
-            if not (-1. <= z and z <= 1.):
+            if not (-1. <= z <= 1.):
                 select[i] = 0
                 continue
 
@@ -296,46 +289,7 @@ cdef class AdvancedPixelBufferFiller:
             else:
                 select[i] = 0
 
-        # Separate variables are used because otherwise a memory leak happens.
-        # I have no idea why is that so...
-        cdef int[:, :] pixel_coords_ = select_values_int(pixel_coords, select, new_size)
-        cdef float[:, :] bar_coords_ = select_values_float(bar_coords, select, new_size)
+        pixel_coords = select_values_int(pixel_coords, select, new_size)
+        bar_coords = select_values_float(bar_coords, select, new_size)
         # --- Return only 'visible' pixel coords
-        return bar_coords_, pixel_coords_
-
-
-if __name__ == '__main__':
-    filler = AdvancedPixelBufferFiller()
-    image_height = 10
-    image_width = 10
-    color_buffer = Buffer(image_height, image_width, dim=3, dtype='uint8')
-    z_buffer = Buffer(image_height, image_width, dim=1, dtype='float32', init_val=100000)
-    n_buffer = Buffer(image_height, image_width, dim=3, dtype='float32')
-
-    import numpy as np
-
-    tri = np.array([[0, 10, 1], [10, 0, 1], [0, 0, 1]], 'float32')
-    colors = np.array([[0, 255, 1], [255, 0, 1], [0, 0, 1]], 'float32')
-    normals = np.random.randn(3, 3).astype('float32')
-
-    pixel_coords = filler._compute_pixel_coords(tri, color_buffer.get_size())
-    print('shape', pixel_coords.shape)
-    print('max\min', pixel_coords.max(), pixel_coords.min())
-
-    pixel_bar_coords, pixel_coords = filler._compute_barycentric_coords(tri, pixel_coords)
-    print('shape', pixel_coords.shape)
-    print('shape', pixel_bar_coords.shape)
-    print('xy max\min', pixel_coords.max(), pixel_coords.min())
-    print('bar max\min', pixel_bar_coords.max(), pixel_bar_coords.min())
-    pixel_bar_coords, pixel_coords = filler._fill_z_buffer(tri, pixel_coords, pixel_bar_coords, z_buffer)
-    print('shape', pixel_coords.shape)
-    print('shape', pixel_bar_coords.shape)
-    print('xy max\min', pixel_coords.max(), pixel_coords.min())
-    print('bar max\min', pixel_bar_coords.max(), pixel_bar_coords.min())
-
-    import matplotlib.pyplot as plt
-
-    z_buffer.clear()
-    filler.compute_triangle_statistics(tri, colors, normals, color_buffer, z_buffer, n_buffer)
-    plt.imshow(color_buffer.get_image())
-    plt.show()
+        return bar_coords, pixel_coords

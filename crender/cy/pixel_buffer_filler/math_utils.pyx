@@ -1,12 +1,7 @@
-from libc.stdlib cimport malloc
+# cython: profile=False
 from cython cimport cdivision, wraparound
 import cython
 import numpy as np
-
-
-cdef float* allocate_float_buffer(size_t n):
-    cdef float *buffer = <float*>malloc(n * sizeof(float))
-    return buffer
 
 
 @cdivision(True)
@@ -15,9 +10,9 @@ cdef inline float bar_compute_single_coord(float l1, float l2, float l3, float a
 
 
 @wraparound(False)
-cdef float[:, :] compute_bar_coords(float[:,:] tri, int[:] x, int[:] y):
+cdef float[:, ::1] compute_bar_coords(float[:,:] tri, int[:] x, int[:] y):
     cdef:
-        float[:, :] bar = np.empty(shape=[x.shape[0], 3], dtype='float32')
+        float[:, ::1] bar = np.empty(shape=[x.shape[0], 3], dtype='float32')
 
         float x0 = tri[0, 0], y0 = tri[0, 1]
         float x1 = tri[1, 0], y1 = tri[1, 1]
