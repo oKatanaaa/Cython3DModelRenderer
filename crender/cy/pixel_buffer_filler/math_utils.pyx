@@ -1,14 +1,18 @@
 # cython: profile=False
-from cython cimport cdivision, wraparound
-import cython
+# distutils: extra_compile_args = -fopenmp
+# distuitls: extra_link_args = -fopenmp
+from cython cimport cdivision, wraparound, boundscheck
+from cython.parallel cimport prange
 import numpy as np
 
 
+@boundscheck(False)
 @cdivision(True)
-cdef inline float bar_compute_single_coord(float l1, float l2, float l3, float a, float b, float x, float y):
+cdef inline float bar_compute_single_coord(float l1, float l2, float l3, float a, float b, float x, float y) nogil:
     return (l1 * (y - a) - l2 * (x - b)) / l3
 
 
+@boundscheck(False)
 @wraparound(False)
 cdef float[:, ::1] compute_bar_coords(float[:,:] tri, int[:] x, int[:] y):
     cdef:
@@ -31,7 +35,9 @@ cdef float[:, ::1] compute_bar_coords(float[:,:] tri, int[:] x, int[:] y):
 
         float x_val, y_val
 
-    for i in range(bar.shape[0]):
+    # This does not have much of an effect on the overall performance.
+    # I just wanted to try it out.
+    for i in prange(bar.shape[0], nogil=True, schedule='static'):
         x_val = <float>x[i]
         y_val = <float>y[i]
         bar[i, 0] = bar_compute_single_coord(l01, l02, l03, y2, x2, x_val, y_val)
@@ -97,8 +103,9 @@ cdef void matmul(float[:,::1] a, float[:, ::1] b, float[:, ::1] out):
                 out[i, j] += a[i, k] * b[k, j]
 
 
+@boundscheck(False)
 @wraparound(False)
-cdef void matmul_3x4(float[:, ::1] a, float[:, ::1] b, float[:, ::1] out):
+cdef void matmul_3x4(float[:, ::1] a, float[:, ::1] b, float[:, ::1] out) nogil:
     # a - [3, 4]
     # b - [4, 4]
     # out - [3, 4]

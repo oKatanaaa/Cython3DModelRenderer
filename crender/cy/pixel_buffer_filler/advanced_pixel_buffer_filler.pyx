@@ -3,21 +3,17 @@
 cimport numpy as cnp
 cimport cython
 from libc.math cimport ceil
-from libc.stdlib cimport free
 
-from .math_utils cimport compute_bar_coords, reduce_min, reduce_max, clip, matmul_3x4, matmul
-from .array_utils cimport select_values_float, select_values_int
+from .math_utils cimport compute_bar_coords, reduce_min, reduce_max, clip, matmul_3x4
 
 import numpy as np
-
-from crender.py.pixel_buffer_filler.pixel_buffer_filler import PixelBufferFiller
 from crender.py.data_structures import Buffer
 
 
 
-cdef im_ind(int[:, :] xy_coords):
-    # a small utils for fast indexing in the image tensor
-    return xy_coords[:, 1], xy_coords[:, 0]
+cdef:
+    int NO_VISIBLE_PIXELS = -1
+    int HAS_VISIBLE_PIXELS = 1
 
 
 cdef class AdvancedPixelBufferFiller:
@@ -33,6 +29,10 @@ cdef class AdvancedPixelBufferFiller:
         object _proj_mat
         int[:, :, ::1] _xy_grid
         float[:, ::1] _projected_tri_buffer
+
+        float[:, :, ::1] normals_buffer
+        float[:, :, ::1] color_buffer
+        float[:, ::1] z_buffer
 
     def __cinit__(self, h, w, fov=90.0, z_near=0.1, z_far=1000.0):
         self._h = <int>h
@@ -58,6 +58,10 @@ cdef class AdvancedPixelBufferFiller:
         self._a = h / w
         self._projected_tri_buffer = np.empty(shape=[4, 4], dtype='float32')
         self._init_projection_matrix()
+        # Initialize buffers
+        self.normals_buffer = np.zeros(shape=[h, w, 3], dtype='float32')
+        self.color_buffer = np.zeros(shape=[h, w, 3], dtype='float32')
+        self.z_buffer = np.ones(shape=[h, w], dtype='float32') * 1e6
 
     def get_size(self):
         return self._h, self._w
@@ -73,11 +77,15 @@ cdef class AdvancedPixelBufferFiller:
 
         self._ones4 = np.ones((3, 4), dtype='float32')
 
+    # --- Performance note
+    # If you type all the arguments here as a typed memoryview (float[:, :]),
+    # the overall performance will drop a bit. That's because a lot of memoryview initializations
+    # are happening. It is okay when a memoryview is being initialized once somewhere,
+    # but in this case it happens A LOT and takes up a considerable amount of time.
     def compute_triangle_statistics(self,
-                                    float[:, ::1] triangle,
-                                    cnp.ndarray colors,
-                                    cnp.ndarray[float, ndim=2] normals,
-                                    color_buffer: Buffer, z_buffer: Buffer, n_buffer: Buffer):
+                                    cnp.ndarray[float, ndim=2] triangle,
+                                    cnp.ndarray[float, ndim=2] colors,
+                                    cnp.ndarray[float, ndim=2] normals):
         # 1. Determine the area of interest
         # 2. Compute barycentric coordinates
         # 3. Fill in z-buffer and determine which pixels are visible
@@ -91,29 +99,28 @@ cdef class AdvancedPixelBufferFiller:
         cdef:
             float[:, :] projected_tri = self._project_on_screen(triangle)
             int[:, :] pixel_coords = self._compute_pixel_coords(projected_tri)
-            int[:, ::1] pixel_coords_ccont
-            float[:, ::1] bar_coords_ccont
+            float[:, ::1] bar_coords
+            int[::1] select
 
         if pixel_coords.shape[0] == 0:
             # The triangle may be invisible, no need for further processing
             return
 
         # Returns coords only for those pixels that lie within the triangle
-        bar_coords_ccont, pixel_coords_ccont = self._compute_barycentric_coords(projected_tri, pixel_coords)
+        bar_coords, select = self._compute_barycentric_coords(projected_tri, pixel_coords)
 
-        if pixel_coords_ccont.shape[0] == 0:
+        if bar_coords.shape[0] == 0:
             # No pixels are visible
             return
 
         # Returns coords only for visible pixels (that are not behind something)
-        bar_coords_ccont, pixel_coords_ccont = self._fill_z_buffer(projected_tri, pixel_coords_ccont, bar_coords_ccont, z_buffer)
+        cdef int return_code = self._fill_z_buffer(projected_tri, pixel_coords, bar_coords, select)
 
-        if pixel_coords_ccont.shape[0] == 0:
-            # The triangle may be invisible, no need to call buffers filling
+        if return_code == NO_VISIBLE_PIXELS:
             return
 
-        self._fill_buffer(colors, pixel_coords_ccont, bar_coords_ccont, color_buffer)
-        self._fill_buffer(normals, pixel_coords_ccont, bar_coords_ccont, n_buffer)
+        self._fill_buffer_3d(colors, pixel_coords, bar_coords, select, self.color_buffer)
+        self._fill_buffer_3d(normals, pixel_coords, bar_coords, select, self.normals_buffer)
 
     cdef float[:, :] _project_on_screen(self, float[:,:] tri):
         self._ones4[:3, :3] = tri
@@ -175,8 +182,18 @@ cdef class AdvancedPixelBufferFiller:
         cdef:
             int h = self._h, w = self._w
             float[:] x = tri[:, 0], y = tri[:, 1]
-            float _x_left = reduce_min(tri[:, 0]), _x_right = reduce_max(tri[:, 0])
-            float _y_top = reduce_max(tri[:, 1]), _y_bot = reduce_min(tri[:, 2])
+            # --- Performance note
+            # Those memoryviews (x and y) were created specifically to avoid multiple slicing
+            # as I suspected it would take up some time.
+            # But even though I made those local memoryview, I forgot to use them and the code
+            # looked something like this:
+            # float _x_left = reduce_min(tri[:, 0]), _x_right = reduce_max(tri[:, 0])
+            # float _y_top = reduce_max(tri[:, 1]), _y_bot = reduce_min(tri[:, 1])
+            # When I fixed it, the performance improved from 0.275s to 0.199s. That's freaking a lot!
+            # I keep getting amazed by how much of the devil in the details there is when writing
+            # a highly performant cython code.
+            float _x_left = reduce_min(x), _x_right = reduce_max(x)
+            float _y_top = reduce_max(y), _y_bot = reduce_min(y)
             int x_left = <int>ceil(_x_left), x_right = <int>ceil(_x_right)
             int y_top = <int>ceil(_y_top), y_bot = <int>ceil(_y_bot)
 
@@ -221,14 +238,19 @@ cdef class AdvancedPixelBufferFiller:
                 continue
             select[i] = 0
 
-        # Select the necessary values
-        cdef:
-            float[:, ::1] bar_ = select_values_float(bar, select, new_size)
-            int[:, ::1] pixel_coords_ = select_values_int(pixel_coords, select, new_size)
+        return bar, select
 
-        return bar_, pixel_coords_
-
-    cdef void _fill_buffer(self, cnp.ndarray values, int[:, ::1] pixel_coords, float[:, ::1] bar_coords, buffer: Buffer):
+    @cython.wraparound(False)
+    @cython.boundscheck(False)
+    @cython.overflowcheck(False)
+    cdef void _fill_buffer_3d(
+            self,
+            cnp.ndarray[float, ndim=2] values,
+            int[:, :] pixel_coords,
+            float[:, ::1] bar_coords,
+            int[::1] select,
+            float[:, :, ::1] buffer
+    ):
         """
         Fills in the the given `buffer` with the interpolated values of `values`.
 
@@ -244,12 +266,25 @@ cdef class AdvancedPixelBufferFiller:
         # Interpolation is done via weighting the values by their barycentric coordinates:
         # val' = l0 * val0 + l1 * val1 * l2 * val2
         # [n, 3] * [3, d] = [n, d]
-        cdef cnp.ndarray interpolated_values = np.dot(bar_coords, values)
-        buffer[im_ind(pixel_coords)] = interpolated_values
+        cdef:
+            size_t i
+            int x, y
+            float l1, l2, l3
+
+        for i in range(pixel_coords.shape[0]):
+            if select[i] == 0:
+                continue
+
+            x = pixel_coords[i, 0]; y = pixel_coords[i, 1]
+            l1 = bar_coords[i, 0]; l2 = bar_coords[i, 1]; l3 = bar_coords[i, 2]
+            buffer[y, x, 0] = values[0, 0] * l1 + values[1, 0] * l2 + values[2, 0] * l3
+            buffer[y, x, 1] = values[0, 1] * l1 + values[1, 1] * l2 + values[2, 1] * l3
+            buffer[y, x, 2] = values[0, 2] * l1 + values[1, 2] * l2 + values[2, 2] * l3
 
     @cython.wraparound(False)
+    @cython.boundscheck(False)
     @cython.overflowcheck(False)
-    cdef _fill_z_buffer(self, float[:, :] tri, int[:, ::1] pixel_coords, float[:, ::1] bar_coords, z_buffer: Buffer):
+    cdef int _fill_z_buffer(self, float[:, :] tri, int[:, :] pixel_coords, float[:, ::1] bar_coords, int[::1] select):
         """
         Fills in the z-buffer by taking into account already existing values.
 
@@ -267,11 +302,12 @@ cdef class AdvancedPixelBufferFiller:
         cdef:
             # If you dont initialize new_size with 0, it turns out that it equals 3. Surprise!
             size_t i, new_size = 0
-            int x, y
-            int[::1] select = np.empty(shape=bar_coords.shape[0], dtype='int32')
+            int x, y, return_code = NO_VISIBLE_PIXELS
             float z
 
         for i in range(bar_coords.shape[0]):
+            if select[i] == 0:
+                continue
             # --- Depth interpolation
             # Save the results into bar_coords buffer to save memory
             z = bar_coords[i, 0] * tri[0, 2] + bar_coords[i, 1] * tri[1, 2] + bar_coords[i, 2] * tri[2, 2]
@@ -282,14 +318,18 @@ cdef class AdvancedPixelBufferFiller:
             x = pixel_coords[i, 0]
             y = pixel_coords[i, 1]
             # Check if new z is closer to the camera than the previous z
-            if z_buffer[y, x] > z:
-                z_buffer[y, x] = z
-                select[i] = 1
-                new_size += 1
+            if self.z_buffer[y, x] > z:
+                self.z_buffer[y, x] = z
+                return_code = HAS_VISIBLE_PIXELS
             else:
                 select[i] = 0
+        return return_code
 
-        pixel_coords = select_values_int(pixel_coords, select, new_size)
-        bar_coords = select_values_float(bar_coords, select, new_size)
-        # --- Return only 'visible' pixel coords
-        return bar_coords, pixel_coords
+    def get_normals_buffer(self):
+        return np.asarray(self.normals_buffer)
+
+    def get_color_buffer(self):
+        return np.asarray(self.color_buffer)
+
+    def get_z_buffer(self):
+        return np.asarray(self.z_buffer)
