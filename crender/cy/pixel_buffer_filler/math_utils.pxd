@@ -1,4 +1,4 @@
-cdef float[:, ::1] compute_bar_coords(float[:, :] tri, int[:] x, int[:] y)
+cdef float[:, ::1] compute_bar_coords(float[:, :] tri, int[:, :] xy)
 
 cdef float reduce_min(float[:] arr)
 cdef float reduce_max(float[:] arr)

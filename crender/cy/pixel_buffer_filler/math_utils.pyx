@@ -1,8 +1,5 @@
 # cython: profile=False
-# distutils: extra_compile_args = -fopenmp
-# distuitls: extra_link_args = -fopenmp
 from cython cimport cdivision, wraparound, boundscheck
-from cython.parallel cimport prange
 import numpy as np
 
 
@@ -14,9 +11,9 @@ cdef inline float bar_compute_single_coord(float l1, float l2, float l3, float a
 
 @boundscheck(False)
 @wraparound(False)
-cdef float[:, ::1] compute_bar_coords(float[:,:] tri, int[:] x, int[:] y):
+cdef float[:, ::1] compute_bar_coords(float[:,:] tri, int[:, :] xy):
     cdef:
-        float[:, ::1] bar = np.empty(shape=[x.shape[0], 3], dtype='float32')
+        float[:, ::1] bar = np.empty(shape=[xy.shape[0], 3], dtype='float32')
 
         float x0 = tri[0, 0], y0 = tri[0, 1]
         float x1 = tri[1, 0], y1 = tri[1, 1]
@@ -37,9 +34,10 @@ cdef float[:, ::1] compute_bar_coords(float[:,:] tri, int[:] x, int[:] y):
 
     # This does not have much of an effect on the overall performance.
     # I just wanted to try it out.
-    for i in prange(bar.shape[0], nogil=True, schedule='static'):
-        x_val = <float>x[i]
-        y_val = <float>y[i]
+    #for i in prange(bar.shape[0], nogil=True, schedule='static'):
+    for i in range(bar.shape[0]):
+        x_val = <float>xy[i, 0]
+        y_val = <float>xy[i, 1]
         bar[i, 0] = bar_compute_single_coord(l01, l02, l03, y2, x2, x_val, y_val)
         bar[i, 1] = bar_compute_single_coord(l11, l12, l13, y0, x0, x_val, y_val)
         bar[i, 2] = bar_compute_single_coord(l21, l22, l23, y1, x1, x_val, y_val)

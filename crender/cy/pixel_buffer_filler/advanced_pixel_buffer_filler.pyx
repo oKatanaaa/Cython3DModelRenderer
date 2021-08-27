@@ -26,7 +26,7 @@ cdef class AdvancedPixelBufferFiller:
         float _z_far
         float _a
         float[:, ::1] _ones4
-        object _proj_mat
+        float[:, ::1] _proj_mat
         int[:, :, ::1] _xy_grid
         float[:, ::1] _projected_tri_buffer
 
@@ -123,6 +123,8 @@ cdef class AdvancedPixelBufferFiller:
         self._fill_buffer_3d(normals, pixel_coords, bar_coords, select, self.normals_buffer)
 
     cdef float[:, :] _project_on_screen(self, float[:,:] tri):
+        # TODO
+        # Optimize the way the triangle is being stored. Avoid slicing at the end.
         self._ones4[:3, :3] = tri
         # --- Perspective projection
         # Projects vertices onto the screen plane and makes them to be in
@@ -223,18 +225,14 @@ cdef class AdvancedPixelBufferFiller:
         """
         # Triangles coords
         cdef:
-            # Pixels' coords
-            int[:] x = pixel_coords[:, 0]
-            int[:] y = pixel_coords[:, 1]
-            float[:, ::1] bar = compute_bar_coords(tri, x, y)
+            float[:, ::1] bar = compute_bar_coords(tri, pixel_coords)
             int[::1] select = np.empty(bar.shape[0], dtype='int32')
-            size_t i, new_size = 0
+            size_t i
 
         # Determine which pixels are within the triangle
         for i in range(bar.shape[0]):
             if bar[i, 0] > 0.0 and bar[i, 1] > 0.0 and bar[i, 2] > 0.0:
                 select[i] = 1
-                new_size += 1
                 continue
             select[i] = 0
 
