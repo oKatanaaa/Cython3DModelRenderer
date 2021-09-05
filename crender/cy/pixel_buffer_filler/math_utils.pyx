@@ -44,7 +44,7 @@ cdef float[:, ::1] compute_bar_coords(float[:,:] tri, int[:, :] xy):
     return bar
 
 
-cdef inline float c_min(float a, float b):
+cdef inline float c_min(float a, float b) nogil:
     if a < b:
         return a
     else:
@@ -63,7 +63,7 @@ cdef float reduce_min(float[:] arr):
     return min_val
 
 
-cdef inline float c_max(float a, float b):
+cdef inline float c_max(float a, float b) nogil:
     if a > b:
         return a
     else:

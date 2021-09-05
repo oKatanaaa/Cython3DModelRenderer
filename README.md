@@ -11,7 +11,7 @@ The repository contains several versions of the same renderer that vary in their
 performance:
 - Version A. This version mainly preserves the way all the computation is done in the Python-only implementation. It has
 a 9x performance boost compared to Python-only implementation. The version is memory bounded (there is a lot of 
-memory allocation going on) and it is very hard to push optimize it further without refactoring the memory management.
+memory allocation going on) and it is very hard to optimize it further without refactoring the memory management.
 So one of the conclusion we can draw regarding why some well-optimized numpy code may run not as fast as it could, is
 that the computation involves a lot of memory allocation. Since allocating memory is a costly operation, it dampens
 the speed drastically. You have to use preallocated buffers for storing intermediate results. This way the code will
