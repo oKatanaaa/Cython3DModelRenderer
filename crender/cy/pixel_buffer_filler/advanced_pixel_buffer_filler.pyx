@@ -1,13 +1,18 @@
 # cython: profile=True
+# distutils: extra_compile_args = -fopenmp
+# distutils: extra_link_args = -fopenmp
 
 cimport numpy as cnp
 cimport cython
+from cython.parallel cimport prange, parallel
 from libc.math cimport ceil
+from libc.stdlib cimport malloc, free
 
-from .math_utils cimport compute_bar_coords, reduce_min, reduce_max, clip, matmul_3x4
+from .math_utils cimport compute_bar_coords, reduce_min, reduce_max, clip, project_triangle
+from .array_utils cimport allocate_float_mat
 
 import numpy as np
-from crender.py.data_structures import Buffer
+from crender.py.data_structures import Buffer, Model
 
 
 
@@ -18,23 +23,24 @@ cdef:
 
 cdef class AdvancedPixelBufferFiller:
     cdef:
-        int _h
-        int _w
-        float _fov
-        float _f
-        float _z_near
-        float _z_far
-        float _a
-        float[:, ::1] _ones4
-        float[:, ::1] _proj_mat
-        int[:, :, ::1] _xy_grid
-        float[:, ::1] _projected_tri_buffer
+        int h
+        int w
+        float fov
+        float f
+        float z_near
+        float z_far
+        float a
+        int n_threads
+        float[:, ::1] ones4
+        float[:, ::1] proj_mat
+        int[:, :, ::1] xy_grid
+        float[:, ::1] projected_tri_buffer
 
         float[:, :, ::1] normals_buffer
         float[:, :, ::1] color_buffer
         float[:, ::1] z_buffer
 
-    def __cinit__(self, h, w, fov=90.0, z_near=0.1, z_far=1000.0):
+    def __cinit__(self, h, w, fov=90.0, z_near=0.1, z_far=1000.0, n_threads=1):
         self._h = <int>h
         self._w = <int>w
         # Prepare the pixel coords buffer beforehand to make slices of it later instead
@@ -49,43 +55,67 @@ cdef class AdvancedPixelBufferFiller:
         x_coords = np.arange(0, w, dtype='int32')
         y_coords = np.arange(0, h, dtype='int32')
         x, y = np.meshgrid(x_coords, y_coords)
-        self._xy_grid = np.stack([x, y], axis=-1)
-        self._fov = <float>fov
-        self._f = 1 / np.tan(self._fov / 2 / 180 * np.pi)
-        self._z_near = <float>z_near
-        self._z_far = <float>z_far
+        self.xy_grid = np.stack([x, y], axis=-1)
+        self.fov = <float>fov
+        self.f = 1 / np.tan(self.fov / 2 / 180 * np.pi)
+        self.z_near = <float>z_near
+        self.z_far = <float>z_far
         # Aspect ratio
-        self._a = h / w
-        self._projected_tri_buffer = np.empty(shape=[4, 4], dtype='float32')
+        self.a = h / w
+        self.projected_tri_buffer = np.empty(shape=[4, 4], dtype='float32')
         self._init_projection_matrix()
+
+        self.n_threads = n_threads
+
         # Initialize buffers
         self.normals_buffer = np.zeros(shape=[h, w, 3], dtype='float32')
         self.color_buffer = np.zeros(shape=[h, w, 3], dtype='float32')
         self.z_buffer = np.ones(shape=[h, w], dtype='float32') * 1e6
 
+
     def get_size(self):
         return self._h, self._w
 
-    def _init_projection_matrix(self):
-        q = self._z_far / (self._z_far - self._z_near)
+    cdef _init_projection_matrix(self):
+        q = self.z_far / (self.z_far - self.z_near)
         self._proj_mat = np.array([
-            [self._f / self._a,     0,                  0, 0],
-            [0,               self._f,                  0, 0],
+            [self.f / self.a, 0, 0, 0],
+            [0, self.f, 0, 0],
             [0,                     0,                  q, 1],
-            [0,                     0,  -self._z_near * q, 0]
+            [0, 0, -self.z_near * q, 0]
         ], dtype='float32')
 
         self._ones4 = np.ones((3, 4), dtype='float32')
+
+    def render_model(self, model: Model):
+        cdef:
+            float[:, :, :] triangles = model._vertices_by_triangles
+            float[:, :, :] colors = model._colors_by_triangles
+            float[:, :, :] normals = model._normals_by_triangles
+            size_t i
+            float[:, :] projected_tri_buff
+
+        with nogil, parallel(num_threads=self.n_threads):
+            projected_tri_buff = allocate_float_mat(3, 4)
+
+            for i in prange(triangles.shape[0], schedule='static'):
+                self._project_on_screen(triangles[i], projected_tri_buff)
+                self.compute_triangle_statistics(
+                    projected_tri_buff,
+                    colors[i],
+                    normals[i]
+                )
+            free(<void*>projected_tri_buff)
 
     # --- Performance note
     # If you type all the arguments here as a typed memoryview (float[:, :]),
     # the overall performance will drop a bit. That's because a lot of memoryview initializations
     # are happening. It is okay when a memoryview is being initialized once somewhere,
     # but in this case it happens A LOT and takes up a considerable amount of time.
-    def compute_triangle_statistics(self,
-                                    cnp.ndarray[float, ndim=2] triangle,
-                                    cnp.ndarray[float, ndim=2] colors,
-                                    cnp.ndarray[float, ndim=2] normals):
+    cdef void compute_triangle_statistics(self,
+                                    float[:, :] triangle,
+                                    float[:, :] colors,
+                                    float[:, :] normals) nogil:
         # 1. Determine the area of interest
         # 2. Compute barycentric coordinates
         # 3. Fill in z-buffer and determine which pixels are visible
@@ -97,8 +127,7 @@ cdef class AdvancedPixelBufferFiller:
             return
 
         cdef:
-            float[:, :] projected_tri = self._project_on_screen(triangle)
-            int[:, :] pixel_coords = self._compute_pixel_coords(projected_tri)
+            int[:, :] pixel_coords = self._compute_pixel_coords(triangle)
             float[:, ::1] bar_coords
             int[::1] select
 
@@ -107,14 +136,14 @@ cdef class AdvancedPixelBufferFiller:
             return
 
         # Returns coords only for those pixels that lie within the triangle
-        bar_coords, select = self._compute_barycentric_coords(projected_tri, pixel_coords)
+        bar_coords, select = self._compute_barycentric_coords(triangle, pixel_coords)
 
         if bar_coords.shape[0] == 0:
             # No pixels are visible
             return
 
         # Returns coords only for visible pixels (that are not behind something)
-        cdef int return_code = self._fill_z_buffer(projected_tri, pixel_coords, bar_coords, select)
+        cdef int return_code = self._fill_z_buffer(triangle, pixel_coords, bar_coords, select)
 
         if return_code == NO_VISIBLE_PIXELS:
             return
@@ -122,49 +151,27 @@ cdef class AdvancedPixelBufferFiller:
         self._fill_buffer_3d(colors, pixel_coords, bar_coords, select, self.color_buffer)
         self._fill_buffer_3d(normals, pixel_coords, bar_coords, select, self.normals_buffer)
 
-    cdef float[:, :] _project_on_screen(self, float[:,:] tri):
+    cdef void _project_on_screen(self, float[:,:] tri, float[:, :] buffer) nogil:
         # TODO
         # Optimize the way the triangle is being stored. Avoid slicing at the end.
         self._ones4[:3, :3] = tri
         # --- Perspective projection
         # Projects vertices onto the screen plane and makes them to be in
         # range [-1, 1]. Vertices outside of that range are invisible.
-        cdef float[:, ::1] projected_tri = self._projected_tri_buffer
-        # Clear the buffer
-        projected_tri[...] = 0.0
-        matmul_3x4(self._ones4, self._proj_mat, projected_tri)
-        # --- Note
-        # Before there was the following line:
-        # projected_tri = np.asarray(self._projected_tri_buffer)
-        # It doesn't change the code functionality (I just forgot to delete it), but it turns out
-        # that execution of that line takes up to 32% of the whole time in this method!
-        # Removing this line boosted performance of that method from 0.019s to 0.013s.
-        # (measurements are taken using cProfile from tottime column).
-        # --- Perspective divide: (x, y) / z.
-        # It makes farther objects to appear smaller on the screen.
-        # Z coordinate is made to be in range [0, 1].
-        # 0 means the object is very close to the camera (lies on the screen).
-        # 1 means the object is on the border of visibility (the farthest visible point).
-        # Any points outside of that range are ether behind the camera or too far away to be visible.
-        cdef size_t i
-        for i in range(3):
-            projected_tri[i, 0] /= projected_tri[i, -1]
-            projected_tri[i, 1] /= projected_tri[i, -1]
-            projected_tri[i, 2] /= projected_tri[i, -1]
+        project_triangle(tri, self._proj_mat, buffer)
 
         # --- Stretching the objects along the screen.
         # The same as:
         # 1. multiply by w/2, h/2
         # 2. shift by w/2, h/2 into the center of the screen
         cdef float shift = 1.0, x_scale = self._w / 2.0, y_scale = self._h / 2.0
-        projected_tri[0, 0] += shift; projected_tri[0, 1] += shift
-        projected_tri[1, 0] += shift; projected_tri[1, 1] += shift
-        projected_tri[2, 0] += shift; projected_tri[2, 1] += shift
+        buffer[0, 0] += shift; buffer[0, 1] += shift
+        buffer[1, 0] += shift; buffer[1, 1] += shift
+        buffer[2, 0] += shift; buffer[2, 1] += shift
 
-        projected_tri[0, 0] *= x_scale; projected_tri[0, 1] *= y_scale
-        projected_tri[1, 0] *= x_scale; projected_tri[1, 1] *= y_scale
-        projected_tri[2, 0] *= x_scale; projected_tri[2, 1] *= y_scale
-        return projected_tri[:3, :3]
+        buffer[0, 0] *= x_scale; buffer[0, 1] *= y_scale
+        buffer[1, 0] *= x_scale; buffer[1, 1] *= y_scale
+        buffer[2, 0] *= x_scale; buffer[2, 1] *= y_scale
 
     cdef int[:, :] _compute_pixel_coords(self, float[:, :] tri):
         """
@@ -205,7 +212,7 @@ cdef class AdvancedPixelBufferFiller:
         y_top = clip(y_top, 0, h)
         y_bot = clip(y_bot, 0, h)
 
-        cdef int[:, :, :] xy_slice = self._xy_grid[y_bot: y_top, x_left: x_right, :]
+        cdef int[:, :, :] xy_slice = self.xy_grid[y_bot: y_top, x_left: x_right, :]
         return np.asarray(xy_slice).reshape(-1, 2)
 
     @cython.wraparound(False)
@@ -243,7 +250,7 @@ cdef class AdvancedPixelBufferFiller:
     @cython.overflowcheck(False)
     cdef void _fill_buffer_3d(
             self,
-            cnp.ndarray[float, ndim=2] values,
+            float[:,:] values,
             int[:, :] pixel_coords,
             float[:, ::1] bar_coords,
             int[::1] select,

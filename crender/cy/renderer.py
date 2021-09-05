@@ -16,9 +16,6 @@ class Renderer:
         self.triangle_iterator_type = triangle_iterator_type
         self.im_h = image_height
         self.im_w = image_width
-        #self.color_buffer = Buffer(image_height, image_width, dim=3, dtype='uint8')
-        #self.z_buffer = Buffer(image_height, image_width, dim=1, init_val=1e6, dtype='float32')
-        #self.n_buffer = Buffer(image_height, image_width, dim=3, dtype='float32')
         self.use_tqdm = use_tqdm
 
     def render(self, model: Model, normalize_model=False, random_colors=True):
@@ -48,13 +45,7 @@ class Renderer:
             model.scale(image_span / model.get_max_span())
             model.shift(- model.get_mean_vertex() + [image_center[0], image_center[1], -image_span])
         iter_wrap = tqdm if self.use_tqdm else lambda x: x
-        for triangle, colors, normals in iter_wrap(self.triangle_iterator_type(model)):
-            if colors is None:
-                color = np.random.randint(256, size=3) if random_colors else np.array([255, 255, 255])
-                colors = np.stack([color] * 3)
-
-            self.pixel_buffer_filler.compute_triangle_statistics(triangle, colors, normals)
-
+        self.pixel_buffer_filler.render_model(model)
         self.illumination.draw_illumination(self.pixel_buffer_filler.get_color_buffer(), self.pixel_buffer_filler.get_normals_buffer())
         return self.pixel_buffer_filler.get_color_buffer()
 

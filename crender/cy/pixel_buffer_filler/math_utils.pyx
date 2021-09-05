@@ -1,5 +1,6 @@
 # cython: profile=False
 from cython cimport cdivision, wraparound, boundscheck
+cimport cython
 import numpy as np
 
 
@@ -103,12 +104,20 @@ cdef void matmul(float[:,::1] a, float[:, ::1] b, float[:, ::1] out):
 
 @boundscheck(False)
 @wraparound(False)
-cdef void matmul_3x4(float[:, ::1] a, float[:, ::1] b, float[:, ::1] out) nogil:
-    # a - [3, 4]
+@cdivision(True)
+@cython.overflowcheck(False)
+cdef void project_triangle(float[:, ::1] tri, float[:, ::1] projection_mat, float[:, ::1] out) nogil:
+    # a - [3, 3]
     # b - [4, 4]
-    # out - [3, 4]
+    # out - [3, 3]
     cdef:
         size_t i, j
+        float z
     for i in range(3):
         for j in range(4):
-            out[i, j] = a[i, 0] * b[0, j] + a[i, 1] * b[1, j] + a[i, 2] * b[2, j] + a[i, 3] * b[3, j]
+            out[i, j] = tri[i, 0] * projection_mat[0, j] + tri[i, 1] * projection_mat[1, j] + tri[i, 2] * projection_mat[2, j] + projection_mat[3, j]
+        # Do perspective divide (normalize z value)
+        z = tri[i, 2] + 1e-6
+        out[i, 0] /= z
+        out[i, 1] /= z
+        out[i, 2] /= z
