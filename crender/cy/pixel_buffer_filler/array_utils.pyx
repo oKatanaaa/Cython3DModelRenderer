@@ -5,13 +5,24 @@ from cython cimport wraparound
 import numpy as np
 
 
-cdef float* allocate_float_buffer(size_t n):
+cdef float* allocate_float_buffer(size_t n) nogil:
     cdef float *buffer = <float*>malloc(n * sizeof(float))
     return buffer
 
 
-cdef float[:, :] allocate_float_mat(size_t n, size_t m):
-    return <float[:n, :m]>allocate_float_buffer(n * m)
+cdef float[:, :] allocate_float_mat(size_t n, size_t m) nogil:
+    with gil:
+        return <float[:n, :m]>allocate_float_buffer(n * m)
+
+
+cdef int* allocate_int_buffer(size_t n) nogil:
+    cdef int *buffer = <int*>malloc(n * sizeof(int))
+    return buffer
+
+
+cdef int[:] allocate_int_vec(size_t n) nogil:
+    with gil:
+        return <int[:n]>allocate_int_buffer(n)
 
 
 @wraparound(False)
