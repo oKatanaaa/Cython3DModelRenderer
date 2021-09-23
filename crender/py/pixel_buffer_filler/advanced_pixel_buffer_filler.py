@@ -87,6 +87,7 @@ class AdvancedPixelBufferFiller(PixelBufferFiller):
         # Projects vertices onto the screen plane and makes them to be in
         # range [-1, 1]. Vertices outside of that range are invisible.
         projected_tri = np.dot(self._ones4, self._proj_mat)
+
         # -- Perspective divide: (x, y) / z.
         # It makes farther objects to appear smaller on the screen.
         # Z coordinate is made to be in range [0, 1].
@@ -101,7 +102,6 @@ class AdvancedPixelBufferFiller(PixelBufferFiller):
         projected_tri[:, :2] += 1.0
         projected_tri[:, 0] *= self._w / 2
         projected_tri[:, 1] *= self._h / 2
-
         return projected_tri[:3, :3]
 
     # Second most heavy method
@@ -142,6 +142,8 @@ class AdvancedPixelBufferFiller(PixelBufferFiller):
         y_coords = np.arange(y_bot, y_top)
         x, y = np.meshgrid(x_coords, y_coords)
         xy_grid = np.stack([x, y], axis=-1)
+        if x_left - x_right == 0 or y_top - y_bot == 0:
+            print(xy_grid)
         return xy_grid.reshape(-1, 2)
 
     # The most heavy method

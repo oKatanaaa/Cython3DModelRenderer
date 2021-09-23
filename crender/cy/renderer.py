@@ -44,12 +44,9 @@ class Renderer:
             # GENIUS FITTING
             model.scale(image_span / model.get_max_span())
             model.shift(- model.get_mean_vertex() + [image_center[0], image_center[1], -image_span])
-        iter_wrap = tqdm if self.use_tqdm else lambda x: x
         self.pixel_buffer_filler.render_model(model)
         self.illumination.draw_illumination(self.pixel_buffer_filler.get_color_buffer(), self.pixel_buffer_filler.get_normals_buffer())
         return self.pixel_buffer_filler.get_color_buffer()
 
     def reset_buffers(self):
-        self.n_buffer.clear()
-        self.z_buffer.clear()
-        self.color_buffer.clear()
+        pass

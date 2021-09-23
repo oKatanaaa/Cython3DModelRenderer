@@ -3,13 +3,18 @@ cdef struct Vec3:
     float x2
     float x3
 
-cdef Vec3 compute_bar_coords_single_pixel(float[:, :] tri, int x, int y) nogil
+cdef Vec3 compute_bar_coords_single_pixel(float *tri, int x, int y) nogil
 cdef float[:, ::1] compute_bar_coords(float[:, :] tri, int[:, :] xy)
 
 cdef float reduce_min(float[:] arr) nogil
 cdef float reduce_max(float[:] arr) nogil
 
-cdef int clip(int a, int min_val, int max_val) nogil
+cdef inline int clip(int a, int min_val, int max_val) nogil:
+    if a < min_val:
+        return min_val
+    if a > max_val:
+        return max_val
+    return a
 
 cdef void matmul(float[:, ::1] a, float[:, ::1] b, float[:, ::1] out)
 

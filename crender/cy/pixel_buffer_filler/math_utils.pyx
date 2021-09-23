@@ -7,11 +7,11 @@ import numpy as np
 @boundscheck(False)
 @cdivision(True)
 @overflowcheck(False)
-cdef Vec3 compute_bar_coords_single_pixel(float[:, :] tri, int x, int y) nogil:
+cdef Vec3 compute_bar_coords_single_pixel(float *tri, int x, int y) nogil:
     cdef:
-        float x0 = tri[0, 0], y0 = tri[0, 1]
-        float x1 = tri[1, 0], y1 = tri[1, 1]
-        float x2 = tri[2, 0], y2 = tri[2, 1]
+        float x0 = tri[0], y0 = tri[1]
+        float x1 = tri[3], y1 = tri[4]
+        float x2 = tri[6], y2 = tri[7]
         # Precompute constants that take place in the barycentric coords formula
         float l01 = x1 - x2, l02 = y1 - y2
         float l03 = l01 * (y0 - y2) - l02 * (x0 - x2)
@@ -109,12 +109,7 @@ cdef float reduce_max(float[:] arr) nogil:
     return max_val
 
 
-cdef int clip(int a, int min_val, int max_val) nogil:
-    if a < min_val:
-        return min_val
-    if a > max_val:
-        return max_val
-    return a
+
 
 @wraparound(False)
 cdef void matmul(float[:,::1] a, float[:, ::1] b, float[:, ::1] out):
@@ -140,7 +135,7 @@ cdef void project_triangle(float[:, :] tri, float[:, :] projection_mat, float[:,
         size_t i, j
         float z
     for i in range(3):
-        for j in range(4):
+        for j in range(3):
             out[i, j] = tri[i, 0] * projection_mat[0, j] + tri[i, 1] * projection_mat[1, j] + tri[i, 2] * projection_mat[2, j] + projection_mat[3, j]
         # Do perspective divide (normalize z value)
         z = tri[i, 2] + 1e-6
