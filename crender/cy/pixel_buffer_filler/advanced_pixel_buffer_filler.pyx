@@ -1,4 +1,4 @@
-# cython: profile=True
+# cython: profile=False
 # distutils: extra_compile_args = /openmp
 # distutils: extra_link_args = /openmp
 # distutils: define_macros=NPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION
@@ -27,10 +27,7 @@ cdef class AdvancedPixelBufferFiller:
         float z_far
         float a
         int n_threads
-        float[:, ::1] ones4
         float[:, ::1] proj_mat
-        int[:, :, ::1] xy_grid
-        float[:, ::1] projected_tri_buffer
 
         float[:, :, ::1] normals_buffer
         float[:, :, ::1] color_buffer
