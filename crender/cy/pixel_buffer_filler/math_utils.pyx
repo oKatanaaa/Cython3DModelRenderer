@@ -78,13 +78,6 @@ cdef float reduce_max(float[:] arr):
     return max_val
 
 
-cdef int clip(int a, int min_val, int max_val):
-    if a < min_val:
-        return min_val
-    if a > max_val:
-        return max_val
-    return a
-
 @wraparound(False)
 cdef void matmul(float[:,::1] a, float[:, ::1] b, float[:, ::1] out):
     cdef:

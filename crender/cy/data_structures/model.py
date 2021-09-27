@@ -120,10 +120,10 @@ class Model:
                  normals=None, triangles_normals=None, recalculate_normals=True, invert_calculated_normals=False):
 
         array_vertices = np.array(vertices, dtype=np.float32)
-        array_triangles_vertices = np.array(triangles_vertices, dtype=np.int)
+        array_triangles_vertices = np.array(triangles_vertices, dtype=np.int32)
         if normals is not None and triangles_normals is not None:
             array_normals = np.array(normals, dtype=np.float32)
-            array_triangles_normals = np.array(triangles_normals, dtype=np.int)
+            array_triangles_normals = np.array(triangles_normals, dtype=np.int32)
         else:
             array_normals = None
             array_triangles_normals = None
@@ -141,18 +141,19 @@ class Model:
             self._colors_by_triangles = None
         else:
             self._texture_coords = np.array(texture_coords, dtype=np.float32)
-            self._triangles_texture_coords = np.array(triangles_texture_coords, dtype=np.int)
+            self._triangles_texture_coords = np.array(triangles_texture_coords, dtype=np.int32)
             self._texture = np.array(texture)
 
             h, w, _ = self._texture.shape
             self._colors = self._texture[np.clip(((1 - self._texture_coords[:, 1]) * h).astype('int32'), 0, h - 1),
                                          np.clip((self._texture_coords[:, 0] * w).astype('int32'), 0, w - 1)]
+            self._colors = self._colors.astype('float32')
             self._colors_by_triangles = self._colors[self._triangles_texture_coords]
 
     def _update_vertices_and_normals(self, array_vertices, array_triangles_vertices,
                                      array_normals, array_triangles_normals, recalculate_normals=True,
                                      invert_calculated_normals=False):
-        self._vertices = array_vertices
+        self._vertices = array_vertices.astype('float32')
         self._triangles_vertices = array_triangles_vertices
         self._vertices_by_triangles = self._vertices[self._triangles_vertices]
 
@@ -160,7 +161,7 @@ class Model:
         self._max_span = np.max(np.linalg.norm(self._vertices - self._mean_vertex, axis=-1))
 
         if array_normals is not None and array_triangles_normals is not None and not recalculate_normals:
-            self._normals = array_normals
+            self._normals = array_normals.astype('float32')
             self._triangles_normals = array_triangles_normals
         else:
             self._normals = Model._compute_normals_by_vertex(self._vertices, self._triangles_vertices)
@@ -184,7 +185,7 @@ class Model:
                 if new:
                     all_normals_of_vertex[vertex_index].append(n)
         return np.stack([Model._normalize(np.mean(np.stack(normals), axis=0)) if len(normals) > 0
-                         else np.zeros(shape=3, dtype=np.float32) for normals in all_normals_of_vertex])
+                         else np.zeros(shape=3, dtype=np.float32) for normals in all_normals_of_vertex]).astype('float32')
 
     @staticmethod
     def _normalize(n):

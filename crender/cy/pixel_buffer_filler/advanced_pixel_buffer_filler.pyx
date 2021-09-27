@@ -175,8 +175,8 @@ cdef class AdvancedPixelBufferFiller:
         cdef:
             int h = self._h, w = self._w
             float[:] x = tri[:, 0], y = tri[:, 1]
-            float _x_left = reduce_min(tri[:, 0]), _x_right = reduce_max(tri[:, 0])
-            float _y_top = reduce_max(tri[:, 1]), _y_bot = reduce_min(tri[:, 2])
+            float _x_left = reduce_min(x), _x_right = reduce_max(x)
+            float _y_top = reduce_max(y), _y_bot = reduce_min(y)
             int x_left = <int>ceil(_x_left), x_right = <int>ceil(_x_right)
             int y_top = <int>ceil(_y_top), y_bot = <int>ceil(_y_bot)
 
