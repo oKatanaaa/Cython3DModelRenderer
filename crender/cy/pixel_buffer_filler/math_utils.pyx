@@ -44,7 +44,7 @@ cdef float[:, ::1] compute_bar_coords(float[:,:] tri, int[:, :] xy):
     return bar
 
 
-cdef inline float c_min(float a, float b) nogil:
+cdef inline float c_min(float a, float b):
     if a < b:
         return a
     else:
@@ -63,7 +63,7 @@ cdef float reduce_min(float[:] arr):
     return min_val
 
 
-cdef inline float c_max(float a, float b) nogil:
+cdef inline float c_max(float a, float b):
     if a > b:
         return a
     else:
@@ -82,15 +82,8 @@ cdef float reduce_max(float[:] arr):
     return max_val
 
 
-cdef int clip(int a, int min_val, int max_val):
-    if a < min_val:
-        return min_val
-    if a > max_val:
-        return max_val
-    return a
-
 @wraparound(False)
-cdef void matmul(float[:,::1] a, float[:, ::1] b, float[:, ::1] out):
+cdef void matmul(float[:,::1] a, float[:, ::1] b, float[:, ::1] out) nogil:
     cdef:
         size_t i, j, k
         size_t N = a.shape[0], M = b.shape[1], D = a.shape[1]

@@ -123,8 +123,6 @@ cdef class AdvancedPixelBufferFiller:
         self._fill_buffer_3d(normals, pixel_coords, bar_coords, select, self.normals_buffer)
 
     cdef float[:, :] _project_on_screen(self, float[:,:] tri):
-        # TODO
-        # Optimize the way the triangle is being stored. Avoid slicing at the end.
         self._ones4[:3, :3] = tri
         # --- Perspective projection
         # Projects vertices onto the screen plane and makes them to be in
