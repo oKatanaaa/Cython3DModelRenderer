@@ -8,22 +8,13 @@ cimport cython
 from cython.parallel cimport prange, parallel
 from libc.math cimport ceil
 from libc.stdlib cimport malloc, free
-from libc.stdio cimport printf, getchar
+from libc.stdio cimport printf
 cimport openmp as omp
-from time import time
 
-from .math_utils cimport compute_bar_coords, reduce_min, reduce_max, clip, project_triangle, \
-    compute_bar_coords_single_pixel, Vec3
-from .array_utils cimport allocate_float_mat, allocate_int_buffer
+from .math_utils cimport clip, compute_bar_coords_single_pixel, Vec3
 
 import numpy as np
-from crender.py.data_structures import Buffer, Model
-
-
-
-cdef:
-    int NO_VISIBLE_PIXELS = -1
-    int HAS_VISIBLE_PIXELS = 1
+from crender.py.data_structures import Model
 
 
 cdef class AdvancedPixelBufferFiller:
@@ -62,15 +53,13 @@ cdef class AdvancedPixelBufferFiller:
         # The point is ALWAYS SPECIFY THE DTYPE!
         x_coords = np.arange(0, w, dtype='int32')
         y_coords = np.arange(0, h, dtype='int32')
-        x, y = np.meshgrid(x_coords, y_coords)
-        self.xy_grid = np.stack([x, y], axis=-1)
+
         self.fov = <float>fov
         self.f = 1 / np.tan(self.fov / 2 / 180 * np.pi)
         self.z_near = <float>z_near
         self.z_far = <float>z_far
         # Aspect ratio
         self.a = h / w
-        self.projected_tri_buffer = np.empty(shape=[4, 4], dtype='float32')
         self._init_projection_matrix()
 
         self.n_threads = n_threads
@@ -80,8 +69,10 @@ cdef class AdvancedPixelBufferFiller:
         self.color_buffer = np.zeros(shape=[h, w, 3], dtype='float32')
         self.z_buffer = np.ones(shape=[h, w], dtype='float32') * 1e6
 
-        omp.omp_init_lock(&self.lock)
-        # Initialize the lock grid
+        # Initialize the lock grid.
+        # Using a single lock dampens multithreading performance drastically.
+        # So instead an entire grid of locks is created so that each
+        # pixel has its own lock. This way threads won't be blocking each other.
         self.lock_grid = <omp.omp_lock_t*>malloc(self.h * self.w * sizeof(omp.omp_lock_t))
 
         cdef int i
@@ -100,8 +91,6 @@ cdef class AdvancedPixelBufferFiller:
             [0,                 0,                 q, 1],
             [0,                 0,  -self.z_near * q, 0]
         ], dtype='float32')
-
-        self.ones4 = np.ones((3, 4), dtype='float32')
 
     def render_model(self, model: Model):
         cdef:
@@ -128,11 +117,11 @@ cdef class AdvancedPixelBufferFiller:
             for ii in prange(tris.shape[0], schedule='static'):
                 # Single triangle projection loop
                 for i in range(3):
+                    z = tris[ii, i, 2]
                     for j in range(3):
                         buff[ii, i, j] = tris[ii, i, 0] * self.proj_mat[0, j] + tris[ii, i, 1] * self.proj_mat[1, j] + \
                                          tris[ii, i, 2] * self.proj_mat[2, j] + self.proj_mat[3, j]
                     # Do perspective divide (normalize z value)
-                    z = tris[ii, i, 2] + 1e-6
                     buff[ii, i, 0] = buff[ii, i, 0] / z
                     buff[ii, i, 1] = buff[ii, i, 1] / z
                     buff[ii, i, 2] = buff[ii, i, 2] / z
@@ -204,7 +193,6 @@ cdef class AdvancedPixelBufferFiller:
             # Barycentric coordinates
             Vec3 bar
             float new_z
-            omp.omp_lock_t lock = self.lock
             omp.omp_lock_t *lock_grid = self.lock_grid
             int *borders_buffer
 
@@ -255,6 +243,8 @@ cdef class AdvancedPixelBufferFiller:
                         self.normals_buffer[y, x, 1] = n1
                         self.normals_buffer[y, x, 2] = n2
                         omp.omp_unset_lock(&lock_grid[y * self.w + x])
+
+            free(<void*>borders_buffer)
 
     def get_normals_buffer(self):
         return np.asarray(self.normals_buffer)

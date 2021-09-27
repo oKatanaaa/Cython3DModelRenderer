@@ -6,7 +6,7 @@ import os
 
 
 meta = {}
-with open(os.path.join('crender', '__version__.py')) as f:
+with open(os.path.join('crender', '__meta__.py')) as f:
     exec(f.read(), meta)
 
 print('Found packages:', find_packages())
