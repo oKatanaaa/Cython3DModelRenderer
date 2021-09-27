@@ -37,7 +37,7 @@ Version B:
 are done. The main difference is that the buffers (normal, color, depth) are a part of the renderer
 making the memory access much faster.
 
-Version C:
+Version C (master):
 - Differs drastically from the other two versions. The differences are:
   - does not perform rendering in a sequential manner triangle by triangle. All the triangles are projected first,
     then they are being drawn in a Cython loop;
@@ -70,7 +70,6 @@ model.rotate([10, -80, 0])
 fit_model(model)
 ```
 
-## Performance
 
 | | Python | Version A | Version B | Version C (1 thread) | Version C (8 threads) | Version C (16 threads) |
 | --- | --- | --- | --- | --- | --- | --- |
