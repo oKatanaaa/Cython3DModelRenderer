@@ -16,6 +16,8 @@ mesh rendering, everything else remained unchanged.
 There are three versions of the Cython renderer: A, B and C. I decided to save intermediate results
 of code optimizations to see how different optimization approaches work.
 
+See `run.py` script for an example of how to run the project.
+
 ## Renderer versions
 
 The repository contains several versions of the same renderer that vary in their implementation and, therefore, performance:
@@ -74,6 +76,9 @@ fit_model(model)
 | --- | --- | --- | --- | --- | --- | --- |
 | Time | 2390 ms | 755 ms | 146 ms | 47 ms | 9 ms | 7 ms |
 | Acceleration ratio | 1x | 3x | 16x | 51x | 265x | 341x |
+
+## Rendering example
+![Result of rendering T-Rex.png](output/T-Rex.png)
 
 ## Authors of the original Python renderer
 

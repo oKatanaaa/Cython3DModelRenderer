@@ -142,8 +142,6 @@ class AdvancedPixelBufferFiller(PixelBufferFiller):
         y_coords = np.arange(y_bot, y_top)
         x, y = np.meshgrid(x_coords, y_coords)
         xy_grid = np.stack([x, y], axis=-1)
-        if x_left - x_right == 0 or y_top - y_bot == 0:
-            print(xy_grid)
         return xy_grid.reshape(-1, 2)
 
     # The most heavy method
